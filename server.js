@@ -9,6 +9,11 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Redirección automática de la raíz al Swagger para que cargue directo
+app.get('/', (req, res) => {
+  res.redirect('/api-docs');
+});
+
 // Configuración de Swagger UI
 const swaggerDocument = YAML.load('./swagger.yaml');
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
