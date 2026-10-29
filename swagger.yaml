@@ -4,8 +4,8 @@ info:
   description: API RESTful con arquitectura en árbol jerárquico unidireccional, sin retornos y con control de inventario, patrones y meal preps.
   version: '1.0.0'
 servers:
-  - url: http://localhost:3000
-    description: Servidor local de desarrollo
+  - url: https://nevera-inteligente-api.onrender.com
+    description: Servidor de producción en Render (Nube)
 paths:
   /api/usuarios:
     post:
