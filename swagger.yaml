@@ -1,0 +1,224 @@
+openapi: '3.0.0'
+info:
+  title: Nevera Inteligente API
+  description: API RESTful con arquitectura en árbol jerárquico unidireccional, sin retornos y con control de inventario, patrones y meal preps.
+  version: '1.0.0'
+servers:
+  - url: http://localhost:3000
+    description: Servidor local de desarrollo
+paths:
+  /api/usuarios:
+    post:
+      operationId: createUser
+      summary: Crear un nuevo usuario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UsuarioInput'
+      responses:
+        "201":
+          description: Usuario creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    get:
+      operationId: listUsers
+      summary: Listar usuarios
+      responses:
+        "200":
+          description: Lista de usuarios obtenida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/inventario:
+    post:
+      operationId: addInventoryItem
+      summary: Agregar alimento físico a la nevera
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InventarioInput'
+      responses:
+        "201":
+          description: Alimento agregado al inventario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    get:
+      operationId: listInventoryItems
+      summary: Listar alimentos en inventario
+      responses:
+        "200":
+          description: Lista de alimentos obtenida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/inventario/{itemId}:
+    get:
+      operationId: getInventoryItem
+      summary: Obtener detalle de un alimento por ID
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Detalle del alimento obtenido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    put:
+      operationId: updateInventoryItem
+      summary: Actualizar estado o cantidad de un alimento
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InventarioInput'
+      responses:
+        "200":
+          description: Alimento actualizado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    delete:
+      operationId: deleteInventoryItem
+      summary: Eliminar alimento del inventario
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Alimento eliminado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/patrones_predictivos:
+    get:
+      operationId: getPredictivePatterns
+      summary: Obtener patrones predictivos de consumo
+      responses:
+        "200":
+          description: Patrones predictivos obtenidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/meal_preps:
+    post:
+      operationId: createMealPrep
+      summary: Crear plan de comidas vinculado a un patrón y un ingrediente
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MealPrepInput'
+      responses:
+        "201":
+          description: Plan de comidas creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    get:
+      operationId: listMealPreps
+      summary: Listar planes de comida
+      responses:
+        "200":
+          description: Lista de planes de comida obtenida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+components:
+  schemas:
+    ApiResponse:
+      type: object
+      description: Estructura unificada de respuesta de la API (Single Return)
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: object
+          nullable: true
+
+    UsuarioInput:
+      type: object
+      properties:
+        nombre:
+          type: string
+        email:
+          type: string
+          format: email
+        password_hash:
+          type: string
+
+    InventarioInput:
+      type: object
+      properties:
+        user_id:
+          type: string
+          description: ID del usuario dueño (ObjectId)
+        producto_id:
+          type: string
+          description: ID del producto comercial (ObjectId)
+        unidad_medida_id:
+          type: string
+          description: ID de la unidad de medida (ObjectId)
+        cantidad:
+          type: number
+        fecha_vencimiento:
+          type: string
+          format: date-time
+          nullable: true
+        estado:
+          type: string
+          enum:
+            - EN_NEVERA
+            - CONSUMIDO
+            - DESPERDICIADO
+          default: EN_NEVERA
+
+    MealPrepInput:
+      type: object
+      properties:
+        patron_predictivo_id:
+          type: string
+          description: ID del patrón predictivo (ObjectId)
+        ingrediente_id:
+          type: string
+          description: ID del ingrediente base (ObjectId)
+        nombre_receta:
+          type: string
+          description: Nombre de la receta sugerida
