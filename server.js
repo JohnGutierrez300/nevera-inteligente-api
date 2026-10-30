@@ -217,6 +217,16 @@ app.get('/api/historial_inventario', async (req, res) => {
 });
 
 // 4. Patrones Predictivos
+app.post('/api/patrones_predictivos', async (req, res) => {
+  try {
+    const nuevoPatron = new PatronPredictivo(req.body);
+    await nuevoPatron.save();
+    res.status(201).json(responseFormat(true, 'Patrón predictivo creado exitosamente', nuevoPatron));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
 app.get('/api/patrones_predictivos', async (req, res) => {
   try {
     const patrones = await PatronPredictivo.find().populate('user_nombre');

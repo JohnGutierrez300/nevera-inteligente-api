@@ -86,7 +86,9 @@ paths:
       parameters:
         - name: itemId
           in: path
-          required: string
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -130,6 +132,22 @@ paths:
                 $ref: '#/components/schemas/ApiResponse'
 
   /api/patrones_predictivos:
+    post:
+      operationId: createPredictivePattern
+      summary: Crear un nuevo patrón predictivo de consumo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatronPredictivoInput'
+      responses:
+        "201":
+          description: Patrón predictivo creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
     get:
       operationId: getPredictivePatterns
       summary: Obtener patrones predictivos de consumo
@@ -219,6 +237,19 @@ components:
             - CONSUMIDO
             - DESPERDICIADO
           default: EN_NEVERA
+
+    PatronPredictivoInput:
+      type: object
+      properties:
+        user_nombre:
+          type: string
+          description: Nombre del usuario evaluado (FK)
+        frecuencia_compra_dias:
+          type: number
+          description: Frecuencia estimada de compra en días
+        probabilidad_desperdicio:
+          type: number
+          description: Índice de probabilidad de desperdicio
 
     MealPrepInput:
       type: object
