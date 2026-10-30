@@ -1,7 +1,7 @@
 openapi: '3.0.0'
 info:
   title: Nevera Inteligente API
-  description: API RESTful con arquitectura en árbol jerárquico unidireccional, sin retornos y con control de inventario, patrones y meal preps.
+  description: API RESTful con arquitectura en árbol jerárquico unidireccional y claves naturales.
   version: '1.0.0'
 servers:
   - url: https://nevera-inteligente-api.onrender.com
@@ -10,7 +10,7 @@ paths:
   /api/usuarios:
     post:
       operationId: createUser
-      summary: Crear un nuevo usuario
+      summary: Crear un nuevo usuario (Nombre como PK)
       requestBody:
         required: true
         content:
@@ -38,7 +38,7 @@ paths:
   /api/inventario:
     post:
       operationId: addInventoryItem
-      summary: Agregar alimento físico a la nevera
+      summary: Agregar alimento físico a la nevera (Genera historial automático)
       requestBody:
         required: true
         content:
@@ -82,7 +82,7 @@ paths:
                 $ref: '#/components/schemas/ApiResponse'
     put:
       operationId: updateInventoryItem
-      summary: Actualizar estado o cantidad de un alimento
+      summary: Actualizar estado o cantidad (Genera historial automático)
       parameters:
         - name: itemId
           in: path
@@ -104,7 +104,7 @@ paths:
                 $ref: '#/components/schemas/ApiResponse'
     delete:
       operationId: deleteInventoryItem
-      summary: Eliminar alimento del inventario
+      summary: Eliminar alimento del inventario (Genera historial automático)
       parameters:
         - name: itemId
           in: path
@@ -114,6 +114,18 @@ paths:
       responses:
         "200":
           description: Alimento eliminado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/historial_inventario:
+    get:
+      operationId: listInventoryHistory
+      summary: Consultar el historial de cambios del inventario
+      responses:
+        "200":
+          description: Historial obtenido exitosamente
           content:
             application/json:
               schema:
@@ -134,7 +146,7 @@ paths:
   /api/meal_preps:
     post:
       operationId: createMealPrep
-      summary: Crear plan de comidas vinculado a un patrón y un ingrediente
+      summary: Crear plan de comidas vinculado
       requestBody:
         required: true
         content:
@@ -163,7 +175,6 @@ components:
   schemas:
     ApiResponse:
       type: object
-      description: Estructura unificada de respuesta de la API (Single Return)
       properties:
         success:
           type: boolean
@@ -178,6 +189,7 @@ components:
       properties:
         nombre:
           type: string
+          description: Nombre del usuario (Actúa como Clave Primaria)
         email:
           type: string
           format: email
@@ -187,15 +199,15 @@ components:
     InventarioInput:
       type: object
       properties:
-        user_id:
+        user_nombre:
           type: string
-          description: ID del usuario dueño (ObjectId)
+          description: Nombre del usuario dueño (FK)
         producto_id:
           type: string
           description: ID del producto comercial (ObjectId)
-        unidad_medida_id:
+        unidad_medida_nombre:
           type: string
-          description: ID de la unidad de medida (ObjectId)
+          description: Nombre de la unidad de medida (FK)
         cantidad:
           type: number
         fecha_vencimiento:
@@ -216,9 +228,8 @@ components:
         patron_predictivo_id:
           type: string
           description: ID del patrón predictivo (ObjectId)
-        ingrediente_id:
+        ingrediente_nombre:
           type: string
-          description: ID del ingrediente base (ObjectId)
+          description: Nombre del ingrediente base (FK)
         nombre_receta:
           type: string
-          description: Nombre de la receta sugerida

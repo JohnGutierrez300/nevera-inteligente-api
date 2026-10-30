@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Redirección automática de la raíz al Swagger para que cargue directo
+// Redirección automática de la raíz al Swagger
 app.get('/', (req, res) => {
   res.redirect('/api-docs');
 });
@@ -31,56 +31,63 @@ const responseFormat = (success, message, data = null) => ({
 });
 
 // ==========================================
-// MODELOS DE MONGOOSE (Estructura en Árbol)
+// MODELOS DE MONGOOSE (Claves Naturales y Árbol)
 // ==========================================
 
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
-  nombre: { type: String, required: true },
+  _id: { type: String, required: true }, // El nombre actúa como PK natural
   email: { type: String, required: true, unique: true },
   password_hash: { type: String, required: true }
-}, { collection: 'usuarios' }));
+}, { collection: 'usuarios', _id: false }));
 
 const Categoria = mongoose.model('Categoria', new mongoose.Schema({
-  nombre: { type: String, required: true, unique: true }
-}, { collection: 'categorias' }));
+  _id: { type: String, required: true }
+}, { collection: 'categorias', _id: false }));
 
 const UnidadMedida = mongoose.model('UnidadMedida', new mongoose.Schema({
-  nombre: { type: String, required: true },
+  _id: { type: String, required: true },
   abreviatura: { type: String, required: true }
-}, { collection: 'unidades_medida' }));
+}, { collection: 'unidades_medida', _id: false }));
 
 const Marca = mongoose.model('Marca', new mongoose.Schema({
-  nombre: { type: String, required: true, unique: true }
-}, { collection: 'marcas' }));
+  _id: { type: String, required: true }
+}, { collection: 'marcas', _id: false }));
 
 const Producto = mongoose.model('Producto', new mongoose.Schema({
-  marca_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Marca', required: true },
-  categoria_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Categoria', required: true },
+  marca_nombre: { type: String, ref: 'Marca', required: true },
+  categoria_nombre: { type: String, ref: 'Categoria', required: true },
   nombre: { type: String, required: true }
 }, { collection: 'productos' }));
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
-  user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', required: true },
+  user_nombre: { type: String, ref: 'Usuario', required: true },
   producto_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Producto', required: true },
-  unidad_medida_id: { type: mongoose.Schema.Types.ObjectId, ref: 'UnidadMedida', required: true },
+  unidad_medida_nombre: { type: String, ref: 'UnidadMedida', required: true },
   cantidad: { type: Number, required: true },
   fecha_vencimiento: { type: Date, default: null },
   estado: { type: String, enum: ['EN_NEVERA', 'CONSUMIDO', 'DESPERDICIADO'], default: 'EN_NEVERA' }
 }, { collection: 'inventario' }));
 
+const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.Schema({
+  inventario_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventario', required: true },
+  accion: { type: String, enum: ['CREADO', 'ACTUALIZADO', 'ELIMINADO'], required: true },
+  detalles: { type: String, required: true },
+  fecha: { type: Date, default: Date.now }
+}, { collection: 'historial_inventario' }));
+
 const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema({
-  user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', required: true },
+  user_nombre: { type: String, ref: 'Usuario', required: true },
   frecuencia_compra_dias: { type: Number },
   probabilidad_desperdicio: { type: Number }
 }, { collection: 'patrones_predictivos' }));
 
 const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
-  nombre: { type: String, required: true, unique: true }
-}, { collection: 'ingredientes' }));
+  _id: { type: String, required: true }
+}, { collection: 'ingredientes', _id: false }));
 
 const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
   patron_predictivo_id: { type: mongoose.Schema.Types.ObjectId, ref: 'PatronPredictivo', required: true },
-  ingrediente_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Ingrediente', required: true },
+  ingrediente_nombre: { type: String, ref: 'Ingrediente', required: true },
   nombre_receta: { type: String, required: true }
 }, { collection: 'meal_preps' }));
 
@@ -88,10 +95,11 @@ const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
 // RUTAS DE LA API RESTful
 // ==========================================
 
-// 1. Usuarios
+// 1. Usuarios (Usando nombre como ID/PK)
 app.post('/api/usuarios', async (req, res) => {
   try {
-    const nuevoUsuario = new Usuario(req.body);
+    const { nombre, email, password_hash } = req.body;
+    const nuevoUsuario = new Usuario({ _id: nombre, email, password_hash });
     await nuevoUsuario.save();
     res.status(201).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
   } catch (error) {
@@ -108,11 +116,18 @@ app.get('/api/usuarios', async (req, res) => {
   }
 });
 
-// 2. Inventario
+// 2. Inventario (Con Historial Automático)
 app.post('/api/inventario', async (req, res) => {
   try {
     const nuevoItem = new Inventario(req.body);
     await nuevoItem.save();
+
+    await HistorialInventario.create({
+      inventario_id: nuevoItem._id,
+      accion: 'CREADO',
+      detalles: `Se agregó el alimento al inventario con estado ${nuevoItem.estado}`
+    });
+
     res.status(201).json(responseFormat(true, 'Alimento agregado al inventario', nuevoItem));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
@@ -122,12 +137,12 @@ app.post('/api/inventario', async (req, res) => {
 app.get('/api/inventario', async (req, res) => {
   try {
     const items = await Inventario.find()
-      .populate('user_id', 'nombre email')
+      .populate('user_nombre')
       .populate({
         path: 'producto_id',
-        populate: ['marca_id', 'categoria_id']
+        populate: ['marca_nombre', 'categoria_nombre']
       })
-      .populate('unidad_medida_id');
+      .populate('unidad_medida_nombre');
     res.status(200).json(responseFormat(true, 'Lista de alimentos en inventario', items));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
@@ -137,12 +152,12 @@ app.get('/api/inventario', async (req, res) => {
 app.get('/api/inventario/:itemId', async (req, res) => {
   try {
     const item = await Inventario.findById(req.params.itemId)
-      .populate('user_id', 'nombre email')
+      .populate('user_nombre')
       .populate({
         path: 'producto_id',
-        populate: ['marca_id', 'categoria_id']
+        populate: ['marca_nombre', 'categoria_nombre']
       })
-      .populate('unidad_medida_id');
+      .populate('unidad_medida_nombre');
     if (!item) {
       return res.status(404).json(responseFormat(false, 'Alimento no encontrado', null));
     }
@@ -158,6 +173,13 @@ app.put('/api/inventario/:itemId', async (req, res) => {
     if (!itemActualizado) {
       return res.status(404).json(responseFormat(false, 'Alimento no encontrado', null));
     }
+
+    await HistorialInventario.create({
+      inventario_id: itemActualizado._id,
+      accion: 'ACTUALIZADO',
+      detalles: `Se actualizó el alimento. Estado: ${itemActualizado.estado}, Cantidad: ${itemActualizado.cantidad}`
+    });
+
     res.status(200).json(responseFormat(true, 'Alimento actualizado exitosamente', itemActualizado));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
@@ -170,23 +192,40 @@ app.delete('/api/inventario/:itemId', async (req, res) => {
     if (!itemEliminado) {
       return res.status(404).json(responseFormat(false, 'Alimento no encontrado', null));
     }
+
+    await HistorialInventario.create({
+      inventario_id: itemEliminado._id,
+      accion: 'ELIMINADO',
+      detalles: `Se eliminó físicamente el alimento del inventario`
+    });
+
     res.status(200).json(responseFormat(true, 'Alimento eliminado exitosamente', itemEliminado));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
   }
 });
 
-// 3. Patrones Predictivos
+// 3. Historial de Inventario
+app.get('/api/historial_inventario', async (req, res) => {
+  try {
+    const historial = await HistorialInventario.find().populate('inventario_id');
+    res.status(200).json(responseFormat(true, 'Historial de inventario obtenido exitosamente', historial));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+// 4. Patrones Predictivos
 app.get('/api/patrones_predictivos', async (req, res) => {
   try {
-    const patrones = await PatronPredictivo.find().populate('user_id', 'nombre email');
+    const patrones = await PatronPredictivo.find().populate('user_nombre');
     res.status(200).json(responseFormat(true, 'Patrones predictivos obtenidos', patrones));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
   }
 });
 
-// 4. Meal Preps
+// 5. Meal Preps
 app.post('/api/meal_preps', async (req, res) => {
   try {
     const nuevoMealPrep = new MealPrep(req.body);
@@ -202,9 +241,9 @@ app.get('/api/meal_preps', async (req, res) => {
     const mealPreps = await MealPrep.find()
       .populate({
         path: 'patron_predictivo_id',
-        populate: { path: 'user_id', select: 'nombre email' }
+        populate: { path: 'user_nombre' }
       })
-      .populate('ingrediente_id');
+      .populate('ingrediente_nombre');
     res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPreps));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
