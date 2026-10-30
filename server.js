@@ -54,14 +54,15 @@ const Marca = mongoose.model('Marca', new mongoose.Schema({
 }, { collection: 'marcas', _id: false }));
 
 const Producto = mongoose.model('Producto', new mongoose.Schema({
+  _id: { type: String, required: true }, // Tú decides el código (ej. "P-01" o "123")
   marca_nombre: { type: String, ref: 'Marca', required: true },
   categoria_nombre: { type: String, ref: 'Categoria', required: true },
   nombre: { type: String, required: true }
-}, { collection: 'productos' }));
+}, { collection: 'productos', _id: false }));
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
-  producto_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Producto', required: true },
+  producto_id: { type: String, ref: 'Producto', required: true }, // <--- Cambiado a String para aceptar códigos personalizados
   unidad_medida_nombre: { type: String, ref: 'UnidadMedida', required: true },
   cantidad: { type: Number, required: true },
   fecha_vencimiento: { type: Date, default: null },

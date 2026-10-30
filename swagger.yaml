@@ -86,9 +86,7 @@ paths:
       parameters:
         - name: itemId
           in: path
-          required: true
-          schema:
-            type: string
+          required: string
       requestBody:
         required: true
         content:
@@ -204,7 +202,7 @@ components:
           description: Nombre del usuario dueño (FK)
         producto_id:
           type: string
-          description: ID del producto comercial (ObjectId)
+          description: Código personalizado del producto (Ej. P-01)
         unidad_medida_nombre:
           type: string
           description: Nombre de la unidad de medida (FK)
