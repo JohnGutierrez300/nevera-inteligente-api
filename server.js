@@ -218,19 +218,32 @@ app.post('/api/inventario', async (req, res) => {
 
 app.get('/api/inventario', async (req, res) => {
   try {
-    const items = await Inventario.find()
-      .populate({ path: 'user_nombre', model: 'Usuario' })
-      .populate({ 
-        path: 'producto_id', 
-        model: 'Producto', 
-        populate: [
-          { path: 'marca_nombre', model: 'Marca' }, 
-          { path: 'categoria_nombre', model: 'Categoria' }
-        ] 
-      })
-      .populate({ path: 'unidad_medida_nombre', model: 'UnidadMedida' });
+    const items = await Inventario.find().lean();
+    
+    // Buscar manualmente los datos relacionados para evitar el null de Mongoose
+    const itemsCompletos = await Promise.all(items.map(async (item) => {
+      const usuario = await Usuario.findById(item.user_nombre).lean();
+      const producto = await Producto.findById(item.producto_id).lean();
+      const unidad = await UnidadMedida.findById(item.unidad_medida_nombre).lean();
+      
+      let marca = null;
+      let categoria = null;
+      if (producto) {
+        marca = await Marca.findById(producto.marca_nombre).lean();
+        categoria = await Categoria.findById(producto.categoria_nombre).lean();
+        producto.marca_nombre = marca;
+        producto.categoria_nombre = categoria;
+      }
 
-    res.status(200).json(responseFormat(true, 'Lista de alimentos en inventario', items));
+      return {
+        ...item,
+        user_nombre: usuario || item.user_nombre,
+        producto_id: producto || item.producto_id,
+        unidad_medida_nombre: unidad || item.unidad_medida_nombre
+      };
+    }));
+
+    res.status(200).json(responseFormat(true, 'Lista de alimentos en inventario', itemsCompletos));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
   }
@@ -238,22 +251,28 @@ app.get('/api/inventario', async (req, res) => {
 
 app.get('/api/inventario/:itemId', async (req, res) => {
   try {
-    const item = await Inventario.findById(req.params.itemId)
-      .populate({ path: 'user_nombre', model: 'Usuario' })
-      .populate({ 
-        path: 'producto_id', 
-        model: 'Producto', 
-        populate: [
-          { path: 'marca_nombre', model: 'Marca' }, 
-          { path: 'categoria_nombre', model: 'Categoria' }
-        ] 
-      })
-      .populate({ path: 'unidad_medida_nombre', model: 'UnidadMedida' });
-
+    const item = await Inventario.findById(req.params.itemId).lean();
     if (!item) {
       return res.status(404).json(responseFormat(false, 'Alimento no encontrado', null));
     }
-    res.status(200).json(responseFormat(true, 'Detalle del alimento obtenido', item));
+
+    const usuario = await Usuario.findById(item.user_nombre).lean();
+    const producto = await Producto.findById(item.producto_id).lean();
+    const unidad = await UnidadMedida.findById(item.unidad_medida_nombre).lean();
+
+    if (producto) {
+      producto.marca_nombre = await Marca.findById(producto.marca_nombre).lean();
+      producto.categoria_nombre = await Categoria.findById(producto.categoria_nombre).lean();
+    }
+
+    const itemCompleto = {
+      ...item,
+      user_nombre: usuario || item.user_nombre,
+      producto_id: producto || item.producto_id,
+      unidad_medida_nombre: unidad || item.unidad_medida_nombre
+    };
+
+    res.status(200).json(responseFormat(true, 'Detalle del alimento obtenido', itemCompleto));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
   }
