@@ -138,18 +138,22 @@ app.post('/api/inventario', async (req, res) => {
 
 app.get('/api/inventario', async (req, res) => {
   try {
-    const items = await Inventario.find()
-      .populate('user_nombre')
-      .populate({
-        path: 'producto_id',
-        populate: ['marca_nombre', 'categoria_nombre']
-      })
-      .populate('unidad_medida_nombre');
-    res.status(200).json(responseFormat(true, 'Lista de alimentos en inventario', items));
-  } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
-  }
-});
+    // En tu app.get('/api/inventario', ...) y app.get('/api/inventario/:itemId', ...)
+const items = await Inventario.find()
+  .populate('user_nombre')
+  .populate({
+    path: 'producto_id',
+    localField: 'producto_id',
+    foreignField: '_id',
+    justOne: true,
+    populate: ['marca_nombre', 'categoria_nombre']
+  })
+  .populate({
+    path: 'unidad_medida_nombre',
+    localField: 'unidad_medida_nombre',
+    foreignField: '_id',
+    justOne: true
+  });
 
 app.get('/api/inventario/:itemId', async (req, res) => {
   try {
