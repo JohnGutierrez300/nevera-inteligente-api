@@ -238,7 +238,7 @@ components:
             - DESPERDICIADO
           default: EN_NEVERA
 
-PatronPredictivoInput:
+    PatronPredictivoInput:
       type: object
       properties:
         _id:
@@ -254,7 +254,7 @@ PatronPredictivoInput:
           type: number
           description: Índice de probabilidad de desperdicio
 
-MealPrepInput:
+    MealPrepInput:
       type: object
       properties:
         patron_predictivo_id:
