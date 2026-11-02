@@ -62,7 +62,7 @@ const Producto = mongoose.model('Producto', new mongoose.Schema({
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
-  producto_id: { type: String, ref: 'Producto', required: true }, // <--- Cambiado a String para aceptar códigos personalizados
+  producto_id: { type: String, ref: 'Producto', required: true },
   unidad_medida_nombre: { type: String, ref: 'UnidadMedida', required: true },
   cantidad: { type: Number, required: true },
   fecha_vencimiento: { type: Date, default: null },
@@ -77,7 +77,7 @@ const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.S
 }, { collection: 'historial_inventario' }));
 
 const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema({
-  _id: { type: String, required: true }, // Ahora tú decides el ID (ej. "PAT-01")
+  _id: { type: String, required: true }, // ID personalizado (ej. "PAT-01")
   user_nombre: { type: String, ref: 'Usuario', required: true },
   frecuencia_compra_dias: { type: Number },
   probabilidad_desperdicio: { type: Number }
@@ -88,7 +88,7 @@ const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
 }, { collection: 'ingredientes', _id: false }));
 
 const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
-  patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true }, // Apunta al ID de texto (ej. "PAT-01")
+  patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true },
   ingrediente_nombre: { type: String, ref: 'Ingrediente', required: true },
   nombre_receta: { type: String, required: true }
 }, { collection: 'meal_preps' }));
@@ -138,32 +138,54 @@ app.post('/api/inventario', async (req, res) => {
 
 app.get('/api/inventario', async (req, res) => {
   try {
-    // En tu app.get('/api/inventario', ...) y app.get('/api/inventario/:itemId', ...)
-const items = await Inventario.find()
-  .populate('user_nombre')
-  .populate({
-    path: 'producto_id',
-    localField: 'producto_id',
-    foreignField: '_id',
-    justOne: true,
-    populate: ['marca_nombre', 'categoria_nombre']
-  })
-  .populate({
-    path: 'unidad_medida_nombre',
-    localField: 'unidad_medida_nombre',
-    foreignField: '_id',
-    justOne: true
-  });
+    const items = await Inventario.find()
+      .populate({
+        path: 'user_nombre',
+        localField: 'user_nombre',
+        foreignField: '_id',
+        justOne: true
+      })
+      .populate({
+        path: 'producto_id',
+        localField: 'producto_id',
+        foreignField: '_id',
+        justOne: true,
+        populate: ['marca_nombre', 'categoria_nombre']
+      })
+      .populate({
+        path: 'unidad_medida_nombre',
+        localField: 'unidad_medida_nombre',
+        foreignField: '_id',
+        justOne: true
+      });
+    res.status(200).json(responseFormat(true, 'Lista de alimentos en inventario', items));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
 
 app.get('/api/inventario/:itemId', async (req, res) => {
   try {
     const item = await Inventario.findById(req.params.itemId)
-      .populate('user_nombre')
+      .populate({
+        path: 'user_nombre',
+        localField: 'user_nombre',
+        foreignField: '_id',
+        justOne: true
+      })
       .populate({
         path: 'producto_id',
+        localField: 'producto_id',
+        foreignField: '_id',
+        justOne: true,
         populate: ['marca_nombre', 'categoria_nombre']
       })
-      .populate('unidad_medida_nombre');
+      .populate({
+        path: 'unidad_medida_nombre',
+        localField: 'unidad_medida_nombre',
+        foreignField: '_id',
+        justOne: true
+      });
     if (!item) {
       return res.status(404).json(responseFormat(false, 'Alimento no encontrado', null));
     }
