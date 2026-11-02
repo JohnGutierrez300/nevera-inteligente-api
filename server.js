@@ -35,7 +35,7 @@ const responseFormat = (success, message, data = null) => ({
 // ==========================================
 
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
-  _id: { type: String, required: true }, // El nombre actúa como PK natural
+  _id: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password_hash: { type: String, required: true }
 }, { collection: 'usuarios', _id: false }));
@@ -54,7 +54,7 @@ const Marca = mongoose.model('Marca', new mongoose.Schema({
 }, { collection: 'marcas', _id: false }));
 
 const Producto = mongoose.model('Producto', new mongoose.Schema({
-  _id: { type: String, required: true }, // Tú decides el código (ej. "P-01" o "123")
+  _id: { type: String, required: true },
   marca_nombre: { type: String, ref: 'Marca', required: true },
   categoria_nombre: { type: String, ref: 'Categoria', required: true },
   nombre: { type: String, required: true }
@@ -77,7 +77,7 @@ const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.S
 }, { collection: 'historial_inventario' }));
 
 const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema({
-  _id: { type: String, required: true }, // ID personalizado (ej. "PAT-01")
+  _id: { type: String, required: true },
   user_nombre: { type: String, ref: 'Usuario', required: true },
   frecuencia_compra_dias: { type: Number },
   probabilidad_desperdicio: { type: Number }
@@ -94,10 +94,10 @@ const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
 }, { collection: 'meal_preps' }));
 
 // ==========================================
-// RUTAS DE LA API RESTful
+// RUTAS DE LA API RESTful (TODAS CON POST Y GET)
 // ==========================================
 
-// 1. Usuarios (Usando nombre como ID/PK)
+// 1. Usuarios
 app.post('/api/usuarios', async (req, res) => {
   try {
     const { nombre, email, password_hash } = req.body;
@@ -118,7 +118,87 @@ app.get('/api/usuarios', async (req, res) => {
   }
 });
 
-// 2. Inventario (Con Historial Automático)
+// 2. Categorías
+app.post('/api/categorias', async (req, res) => {
+  try {
+    const nuevaCategoria = new Categoria(req.body);
+    await nuevaCategoria.save();
+    res.status(201).json(responseFormat(true, 'Categoría creada exitosamente', nuevaCategoria));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+app.get('/api/categorias', async (req, res) => {
+  try {
+    const categorias = await Categoria.find();
+    res.status(200).json(responseFormat(true, 'Lista de categorías obtenida', categorias));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+// 3. Marcas
+app.post('/api/marcas', async (req, res) => {
+  try {
+    const nuevaMarca = new Marca(req.body);
+    await nuevaMarca.save();
+    res.status(201).json(responseFormat(true, 'Marca creada exitosamente', nuevaMarca));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+app.get('/api/marcas', async (req, res) => {
+  try {
+    const marcas = await Marca.find();
+    res.status(200).json(responseFormat(true, 'Lista de marcas obtenida', marcas));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+// 4. Unidades de Medida
+app.post('/api/unidades_medida', async (req, res) => {
+  try {
+    const nuevaUnidad = new UnidadMedida(req.body);
+    await nuevaUnidad.save();
+    res.status(201).json(responseFormat(true, 'Unidad de medida creada exitosamente', nuevaUnidad));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+app.get('/api/unidades_medida', async (req, res) => {
+  try {
+    const unidades = await UnidadMedida.find();
+    res.status(200).json(responseFormat(true, 'Lista de unidades de medida obtenida', unidades));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+// 5. Productos
+app.post('/api/productos', async (req, res) => {
+  try {
+    const nuevoProducto = new Producto(req.body);
+    await nuevoProducto.save();
+    res.status(201).json(responseFormat(true, 'Producto creado exitosamente', nuevoProducto));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+app.get('/api/productos', async (req, res) => {
+  try {
+    const productos = await Producto.find().populate('marca_nombre').populate('categoria_nombre');
+    res.status(200).json(responseFormat(true, 'Lista de productos obtenida', productos));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+// 6. Inventario (Con Historial Automático)
 app.post('/api/inventario', async (req, res) => {
   try {
     const nuevoItem = new Inventario(req.body);
@@ -233,7 +313,7 @@ app.delete('/api/inventario/:itemId', async (req, res) => {
   }
 });
 
-// 3. Historial de Inventario
+// 7. Historial de Inventario
 app.get('/api/historial_inventario', async (req, res) => {
   try {
     const historial = await HistorialInventario.find().populate('inventario_id');
@@ -243,7 +323,7 @@ app.get('/api/historial_inventario', async (req, res) => {
   }
 });
 
-// 4. Patrones Predictivos
+// 8. Patrones Predictivos
 app.post('/api/patrones_predictivos', async (req, res) => {
   try {
     const nuevoPatron = new PatronPredictivo(req.body);
@@ -263,7 +343,27 @@ app.get('/api/patrones_predictivos', async (req, res) => {
   }
 });
 
-// 5. Meal Preps
+// 9. Ingredientes
+app.post('/api/ingredientes', async (req, res) => {
+  try {
+    const nuevoIngrediente = new Ingrediente(req.body);
+    await nuevoIngrediente.save();
+    res.status(201).json(responseFormat(true, 'Ingrediente creado exitosamente', nuevoIngrediente));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+app.get('/api/ingredientes', async (req, res) => {
+  try {
+    const ingredientes = await Ingrediente.find();
+    res.status(200).json(responseFormat(true, 'Lista de ingredientes obtenida', ingredientes));
+  } catch (error) {
+    res.status(500).json(responseFormat(false, error.message, null));
+  }
+});
+
+// 10. Meal Preps
 app.post('/api/meal_preps', async (req, res) => {
   try {
     const nuevoMealPrep = new MealPrep(req.body);
