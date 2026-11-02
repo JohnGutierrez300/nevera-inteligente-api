@@ -77,17 +77,18 @@ const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.S
 }, { collection: 'historial_inventario' }));
 
 const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema({
+  _id: { type: String, required: true }, // Ahora tú decides el ID (ej. "PAT-01")
   user_nombre: { type: String, ref: 'Usuario', required: true },
   frecuencia_compra_dias: { type: Number },
   probabilidad_desperdicio: { type: Number }
-}, { collection: 'patrones_predictivos' }));
+}, { collection: 'patrones_predictivos', _id: false }));
 
 const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
   _id: { type: String, required: true }
 }, { collection: 'ingredientes', _id: false }));
 
 const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
-  patron_predictivo_id: { type: mongoose.Schema.Types.ObjectId, ref: 'PatronPredictivo', required: true },
+  patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true }, // Apunta al ID de texto (ej. "PAT-01")
   ingrediente_nombre: { type: String, ref: 'Ingrediente', required: true },
   nombre_receta: { type: String, required: true }
 }, { collection: 'meal_preps' }));

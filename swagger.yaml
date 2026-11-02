@@ -238,9 +238,12 @@ components:
             - DESPERDICIADO
           default: EN_NEVERA
 
-    PatronPredictivoInput:
+PatronPredictivoInput:
       type: object
       properties:
+        _id:
+          type: string
+          description: Código personalizado del patrón (Ej. PAT-01)
         user_nombre:
           type: string
           description: Nombre del usuario evaluado (FK)
@@ -251,12 +254,12 @@ components:
           type: number
           description: Índice de probabilidad de desperdicio
 
-    MealPrepInput:
+MealPrepInput:
       type: object
       properties:
         patron_predictivo_id:
           type: string
-          description: ID del patrón predictivo (ObjectId)
+          description: Código del patrón predictivo (Ej. PAT-01)
         ingrediente_nombre:
           type: string
           description: Nombre del ingrediente base (FK)
