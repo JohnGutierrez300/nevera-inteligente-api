@@ -35,6 +35,146 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
 
+  /api/categorias:
+    post:
+      operationId: createCategory
+      summary: Crear una nueva categoría de alimentos
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoriaInput'
+      responses:
+        "201":
+          description: Categoría creada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    get:
+      operationId: listCategories
+      summary: Listar categorías
+      responses:
+        "200":
+          description: Lista de categorías obtenida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/marcas:
+    post:
+      operationId: createBrand
+      summary: Crear una nueva marca
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarcaInput'
+      responses:
+        "201":
+          description: Marca creada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    get:
+      operationId: listBrands
+      summary: Listar marcas
+      responses:
+        "200":
+          description: Lista de marcas obtenida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/unidades_medida:
+    post:
+      operationId: createUnit
+      summary: Crear una nueva unidad de medida
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnidadMedidaInput'
+      responses:
+        "201":
+          description: Unidad de medida creada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    get:
+      operationId: listUnits
+      summary: Listar unidades de medida
+      responses:
+        "200":
+          description: Lista de unidades de medida obtenida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/ingredientes:
+    post:
+      operationId: createIngredient
+      summary: Crear un nuevo ingrediente base
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngredienteInput'
+      responses:
+        "201":
+          description: Ingrediente creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    get:
+      operationId: listIngredients
+      summary: Listar ingredientes
+      responses:
+        "200":
+          description: Lista de ingredientes obtenida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/productos:
+    post:
+      operationId: createProduct
+      summary: Crear un nuevo producto comercial
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductoInput'
+      responses:
+        "201":
+          description: Producto creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    get:
+      operationId: listProducts
+      summary: Listar productos
+      responses:
+        "200":
+          description: Lista de productos obtenida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
   /api/inventario:
     post:
       operationId: addInventoryItem
@@ -211,6 +351,53 @@ components:
           format: email
         password_hash:
           type: string
+
+    CategoriaInput:
+      type: object
+      properties:
+        _id:
+          type: string
+          description: Nombre de la categoría (Clave Primaria natural)
+
+    MarcaInput:
+      type: object
+      properties:
+        _id:
+          type: string
+          description: Nombre de la marca (Clave Primaria natural)
+
+    UnidadMedidaInput:
+      type: object
+      properties:
+        _id:
+          type: string
+          description: Nombre de la unidad (Clave Primaria natural)
+        abreviatura:
+          type: string
+          description: Símbolo abreviado (Ej. g, ml, und)
+
+    IngredienteInput:
+      type: object
+      properties:
+        _id:
+          type: string
+          description: Nombre del ingrediente base (Clave Primaria natural)
+
+    ProductoInput:
+      type: object
+      properties:
+        _id:
+          type: string
+          description: Código personalizado del producto (Ej. P-01)
+        marca_nombre:
+          type: string
+          description: Nombre de la marca (FK)
+        categoria_nombre:
+          type: string
+          description: Nombre de la categoría (FK)
+        nombre:
+          type: string
+          description: Nombre específico del producto
 
     InventarioInput:
       type: object
