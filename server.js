@@ -379,14 +379,27 @@ app.post('/api/meal_preps', async (req, res) => {
 
 app.get('/api/meal_preps', async (req, res) => {
   try {
-    const mealPreps = await MealPrep.find()
-      .populate({
-        path: 'patron_predictivo_id',
-        model: 'PatronPredictivo',
-        populate: { path: 'user_nombre', model: 'Usuario' }
-      })
-      .populate({ path: 'ingrediente_nombre', model: 'Ingrediente' });
-    res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPreps));
+    const mealPreps = await MealPrep.find().lean();
+    
+    const mealPrepsCompletos = await Promise.all(mealPreps.map(async (prep) => {
+      // Buscar el patrón predictivo y poblar su usuario manualmente
+      let patron = await PatronPredictivo.findById(prep.patron_predictivo_id).lean();
+      if (patron) {
+        const usuario = await Usuario.findById(patron.user_nombre).lean();
+        patron.user_nombre = usuario || patron.user_nombre;
+      }
+
+      // Buscar el ingrediente por su clave natural de texto
+      const ingrediente = await Ingrediente.findById(prep.ingrediente_nombre).lean();
+
+      return {
+        ...prep,
+        patron_predictivo_id: patron || prep.patron_predictivo_id,
+        ingrediente_nombre: ingrediente || prep.ingrediente_nombre
+      };
+    }));
+
+    res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPrepsCompletos));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
   }
