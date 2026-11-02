@@ -219,25 +219,17 @@ app.post('/api/inventario', async (req, res) => {
 app.get('/api/inventario', async (req, res) => {
   try {
     const items = await Inventario.find()
-      .populate({
-        path: 'user_nombre',
-        localField: 'user_nombre',
-        foreignField: '_id',
-        justOne: true
+      .populate({ path: 'user_nombre', model: 'Usuario' })
+      .populate({ 
+        path: 'producto_id', 
+        model: 'Producto', 
+        populate: [
+          { path: 'marca_nombre', model: 'Marca' }, 
+          { path: 'categoria_nombre', model: 'Categoria' }
+        ] 
       })
-      .populate({
-        path: 'producto_id',
-        localField: 'producto_id',
-        foreignField: '_id',
-        justOne: true,
-        populate: ['marca_nombre', 'categoria_nombre']
-      })
-      .populate({
-        path: 'unidad_medida_nombre',
-        localField: 'unidad_medida_nombre',
-        foreignField: '_id',
-        justOne: true
-      });
+      .populate({ path: 'unidad_medida_nombre', model: 'UnidadMedida' });
+
     res.status(200).json(responseFormat(true, 'Lista de alimentos en inventario', items));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
@@ -247,25 +239,17 @@ app.get('/api/inventario', async (req, res) => {
 app.get('/api/inventario/:itemId', async (req, res) => {
   try {
     const item = await Inventario.findById(req.params.itemId)
-      .populate({
-        path: 'user_nombre',
-        localField: 'user_nombre',
-        foreignField: '_id',
-        justOne: true
+      .populate({ path: 'user_nombre', model: 'Usuario' })
+      .populate({ 
+        path: 'producto_id', 
+        model: 'Producto', 
+        populate: [
+          { path: 'marca_nombre', model: 'Marca' }, 
+          { path: 'categoria_nombre', model: 'Categoria' }
+        ] 
       })
-      .populate({
-        path: 'producto_id',
-        localField: 'producto_id',
-        foreignField: '_id',
-        justOne: true,
-        populate: ['marca_nombre', 'categoria_nombre']
-      })
-      .populate({
-        path: 'unidad_medida_nombre',
-        localField: 'unidad_medida_nombre',
-        foreignField: '_id',
-        justOne: true
-      });
+      .populate({ path: 'unidad_medida_nombre', model: 'UnidadMedida' });
+
     if (!item) {
       return res.status(404).json(responseFormat(false, 'Alimento no encontrado', null));
     }
@@ -336,7 +320,7 @@ app.post('/api/patrones_predictivos', async (req, res) => {
 
 app.get('/api/patrones_predictivos', async (req, res) => {
   try {
-    const patrones = await PatronPredictivo.find().populate('user_nombre');
+    const patrones = await PatronPredictivo.find().populate({ path: 'user_nombre', model: 'Usuario' });
     res.status(200).json(responseFormat(true, 'Patrones predictivos obtenidos', patrones));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
@@ -379,9 +363,10 @@ app.get('/api/meal_preps', async (req, res) => {
     const mealPreps = await MealPrep.find()
       .populate({
         path: 'patron_predictivo_id',
-        populate: { path: 'user_nombre' }
+        model: 'PatronPredictivo',
+        populate: { path: 'user_nombre', model: 'Usuario' }
       })
-      .populate('ingrediente_nombre');
+      .populate({ path: 'ingrediente_nombre', model: 'Ingrediente' });
     res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPreps));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
