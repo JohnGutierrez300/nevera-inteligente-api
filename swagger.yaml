@@ -1,7 +1,7 @@
 openapi: '3.0.0'
 info:
   title: Nevera Inteligente API
-  description: API RESTful con arquitectura en árbol jerárquico unidireccional y claves naturales.
+  description: API RESTful con arquitectura en árbol jerárquico unidireccional y claves naturales, manejo estricto de códigos HTTP y claves foráneas.
   version: '1.0.0'
 servers:
   - url: https://nevera-inteligente-api.onrender.com
@@ -19,21 +19,27 @@ paths:
               $ref: '#/components/schemas/UsuarioInput'
       responses:
         "201":
-          description: Usuario creado exitosamente
+          description: Creado exitosamente (2xx - Satisfactoria)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "400":
+          description: Solicitud incorrecta o datos incompletos (4xx - Error del cliente)
+        "500":
+          description: Error interno del servidor (5xx - Error del servidor)
     get:
       operationId: listUsers
       summary: Listar usuarios
       responses:
         "200":
-          description: Lista de usuarios obtenida
+          description: Lista obtenida exitosamente (2xx - Satisfactoria)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error interno del servidor (5xx - Error del servidor)
 
   /api/categorias:
     post:
@@ -47,21 +53,27 @@ paths:
               $ref: '#/components/schemas/CategoriaInput'
       responses:
         "201":
-          description: Categoría creada exitosamente
+          description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "400":
+          description: Datos inválidos
+        "500":
+          description: Error del servidor
     get:
       operationId: listCategories
       summary: Listar categorías
       responses:
         "200":
-          description: Lista de categorías obtenida
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error del servidor
 
   /api/marcas:
     post:
@@ -75,21 +87,27 @@ paths:
               $ref: '#/components/schemas/MarcaInput'
       responses:
         "201":
-          description: Marca creada exitosamente
+          description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "400":
+          description: Datos inválidos
+        "500":
+          description: Error del servidor
     get:
       operationId: listBrands
       summary: Listar marcas
       responses:
         "200":
-          description: Lista de marcas obtenida
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error del servidor
 
   /api/unidades_medida:
     post:
@@ -103,21 +121,27 @@ paths:
               $ref: '#/components/schemas/UnidadMedidaInput'
       responses:
         "201":
-          description: Unidad de medida creada exitosamente
+          description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "400":
+          description: Datos inválidos
+        "500":
+          description: Error del servidor
     get:
       operationId: listUnits
       summary: Listar unidades de medida
       responses:
         "200":
-          description: Lista de unidades de medida obtenida
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error del servidor
 
   /api/ingredientes:
     post:
@@ -131,21 +155,27 @@ paths:
               $ref: '#/components/schemas/IngredienteInput'
       responses:
         "201":
-          description: Ingrediente creado exitosamente
+          description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "400":
+          description: Datos inválidos
+        "500":
+          description: Error del servidor
     get:
       operationId: listIngredients
       summary: Listar ingredientes
       responses:
         "200":
-          description: Lista de ingredientes obtenida
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error del servidor
 
   /api/productos:
     post:
@@ -159,21 +189,27 @@ paths:
               $ref: '#/components/schemas/ProductoInput'
       responses:
         "201":
-          description: Producto creado exitosamente
+          description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "400":
+          description: Error en datos o llaves foráneas
+        "500":
+          description: Error del servidor
     get:
       operationId: listProducts
       summary: Listar productos
       responses:
         "200":
-          description: Lista de productos obtenida
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error del servidor
 
   /api/inventario:
     post:
@@ -187,21 +223,27 @@ paths:
               $ref: '#/components/schemas/InventarioInput'
       responses:
         "201":
-          description: Alimento agregado al inventario
+          description: Alimento agregado exitosamente (2xx)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "400":
+          description: Datos de entrada no válidos (4xx - Cliente)
+        "500":
+          description: Error interno del servidor (5xx - Servidor)
     get:
       operationId: listInventoryItems
       summary: Listar alimentos en inventario
       responses:
         "200":
-          description: Lista de alimentos obtenida
+          description: Lista obtenida exitosamente (2xx)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error interno del servidor (5xx)
 
   /api/inventario/{itemId}:
     get:
@@ -215,11 +257,15 @@ paths:
             type: string
       responses:
         "200":
-          description: Detalle del alimento obtenido
+          description: Detalle obtenido exitosamente (2xx)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "404":
+          description: Recurso no encontrado (4xx - Cliente)
+        "500":
+          description: Error interno del servidor (5xx)
     put:
       operationId: updateInventoryItem
       summary: Actualizar estado o cantidad (Genera historial automático)
@@ -237,11 +283,17 @@ paths:
               $ref: '#/components/schemas/InventarioInput'
       responses:
         "200":
-          description: Alimento actualizado exitosamente
+          description: Actualizado exitosamente (2xx)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "400":
+          description: Datos inválidos (4xx)
+        "404":
+          description: Recurso no encontrado (4xx)
+        "500":
+          description: Error interno del servidor (5xx)
     delete:
       operationId: deleteInventoryItem
       summary: Eliminar alimento del inventario (Genera historial automático)
@@ -253,11 +305,15 @@ paths:
             type: string
       responses:
         "200":
-          description: Alimento eliminado exitosamente
+          description: Eliminado exitosamente (2xx)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "404":
+          description: Recurso no encontrado (4xx)
+        "500":
+          description: Error interno del servidor (5xx)
 
   /api/historial_inventario:
     get:
@@ -265,11 +321,13 @@ paths:
       summary: Consultar el historial de cambios del inventario
       responses:
         "200":
-          description: Historial obtenido exitosamente
+          description: Historial obtenido exitosamente (2xx)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error interno del servidor (5xx)
 
   /api/patrones_predictivos:
     post:
@@ -283,21 +341,27 @@ paths:
               $ref: '#/components/schemas/PatronPredictivoInput'
       responses:
         "201":
-          description: Patrón predictivo creado exitosamente
+          description: Creado exitosamente (2xx)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "400":
+          description: Datos no válidos (4xx)
+        "500":
+          description: Error del servidor (5xx)
     get:
       operationId: getPredictivePatterns
       summary: Obtener patrones predictivos de consumo
       responses:
         "200":
-          description: Patrones predictivos obtenidos
+          description: Obtenido exitosamente (2xx)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error del servidor (5xx)
 
   /api/meal_preps:
     post:
@@ -311,21 +375,27 @@ paths:
               $ref: '#/components/schemas/MealPrepInput'
       responses:
         "201":
-          description: Plan de comidas creado exitosamente
+          description: Creado exitosamente (2xx)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "400":
+          description: Datos no válidos (4xx)
+        "500":
+          description: Error del servidor (5xx)
     get:
       operationId: listMealPreps
       summary: Listar planes de comida
       responses:
         "200":
-          description: Lista de planes de comida obtenida
+          description: Listado obtenido exitosamente (2xx)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error del servidor (5xx)
 
 components:
   schemas:
