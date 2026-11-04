@@ -407,6 +407,22 @@ app.get('/api/meal_preps', async (req, res) => {
 
 // Inicialización del Servidor
 const PORT = process.env.PORT || 3000;
+// ==========================================
+// MIDDLEWARE GLOBAL DE MANEJO DE ERRORES ("FUERA DE BASE")
+// ==========================================
+app.use((err, req, res, next) => {
+  console.error("Error detectado:", err.message);
+  
+  // Determinar si es un error de validación o un error interno del servidor
+  const statusCode = err.statusCode || 500;
+  const message = err.message || 'Error interno del servidor';
+
+  res.status(statusCode).json({
+    success: false,
+    message: message,
+    data: null
+  });
+});
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
   console.log(`Documentación interactiva disponible en http://localhost:${PORT}/api-docs`);
