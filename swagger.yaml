@@ -1,14 +1,20 @@
 openapi: '3.0.0'
 info:
   title: Nevera Inteligente API
-  description: API RESTful con arquitectura en árbol jerárquico unidireccional y claves naturales, manejo estricto de códigos HTTP y claves foráneas.
+  description: API RESTful con arquitectura en árbol jerárquico, claves naturales y organización por entidades.
   version: '1.0.0'
 servers:
   - url: https://nevera-inteligente-api.onrender.com
     description: Servidor de producción en Render (Nube)
+
 paths:
+  # ==========================================
+  # 1. MÓDULO DE USUARIOS
+  # ==========================================
   /api/usuarios:
     post:
+      tags:
+        - Usuarios
       operationId: createUser
       summary: Crear un nuevo usuario (Nombre como PK)
       requestBody:
@@ -19,30 +25,37 @@ paths:
               $ref: '#/components/schemas/UsuarioInput'
       responses:
         "201":
-          description: Creado exitosamente (2xx - Satisfactoria)
+          description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "400":
-          description: Solicitud incorrecta o datos incompletos (4xx - Error del cliente)
+          description: Datos inválidos
         "500":
-          description: Error interno del servidor (5xx - Error del servidor)
+          description: Error del servidor
     get:
+      tags:
+        - Usuarios
       operationId: listUsers
       summary: Listar usuarios
       responses:
         "200":
-          description: Lista obtenida exitosamente (2xx - Satisfactoria)
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "500":
-          description: Error interno del servidor (5xx - Error del servidor)
+          description: Error del servidor
 
+  # ==========================================
+  # 2. MÓDULO DE CATEGORÍAS
+  # ==========================================
   /api/categorias:
     post:
+      tags:
+        - Categorías
       operationId: createCategory
       summary: Crear una nueva categoría de alimentos
       requestBody:
@@ -63,6 +76,8 @@ paths:
         "500":
           description: Error del servidor
     get:
+      tags:
+        - Categorías
       operationId: listCategories
       summary: Listar categorías
       responses:
@@ -75,8 +90,13 @@ paths:
         "500":
           description: Error del servidor
 
+  # ==========================================
+  # 3. MÓDULO DE MARCAS
+  # ==========================================
   /api/marcas:
     post:
+      tags:
+        - Marcas
       operationId: createBrand
       summary: Crear una nueva marca
       requestBody:
@@ -97,6 +117,8 @@ paths:
         "500":
           description: Error del servidor
     get:
+      tags:
+        - Marcas
       operationId: listBrands
       summary: Listar marcas
       responses:
@@ -109,8 +131,13 @@ paths:
         "500":
           description: Error del servidor
 
+  # ==========================================
+  # 4. MÓDULO DE UNIDADES DE MEDIDA
+  # ==========================================
   /api/unidades_medida:
     post:
+      tags:
+        - Unidades de Medida
       operationId: createUnit
       summary: Crear una nueva unidad de medida
       requestBody:
@@ -131,6 +158,8 @@ paths:
         "500":
           description: Error del servidor
     get:
+      tags:
+        - Unidades de Medida
       operationId: listUnits
       summary: Listar unidades de medida
       responses:
@@ -143,8 +172,13 @@ paths:
         "500":
           description: Error del servidor
 
+  # ==========================================
+  # 5. MÓDULO DE INGREDIENTES
+  # ==========================================
   /api/ingredientes:
     post:
+      tags:
+        - Ingredientes
       operationId: createIngredient
       summary: Crear un nuevo ingrediente base
       requestBody:
@@ -165,6 +199,8 @@ paths:
         "500":
           description: Error del servidor
     get:
+      tags:
+        - Ingredientes
       operationId: listIngredients
       summary: Listar ingredientes
       responses:
@@ -177,8 +213,13 @@ paths:
         "500":
           description: Error del servidor
 
+  # ==========================================
+  # 6. MÓDULO DE PRODUCTOS
+  # ==========================================
   /api/productos:
     post:
+      tags:
+        - Productos
       operationId: createProduct
       summary: Crear un nuevo producto comercial
       requestBody:
@@ -199,6 +240,8 @@ paths:
         "500":
           description: Error del servidor
     get:
+      tags:
+        - Productos
       operationId: listProducts
       summary: Listar productos
       responses:
@@ -211,8 +254,13 @@ paths:
         "500":
           description: Error del servidor
 
+  # ==========================================
+  # 7. MÓDULO DE INVENTARIO
+  # ==========================================
   /api/inventario:
     post:
+      tags:
+        - Inventario
       operationId: addInventoryItem
       summary: Agregar alimento físico a la nevera (Genera historial automático)
       requestBody:
@@ -223,30 +271,34 @@ paths:
               $ref: '#/components/schemas/InventarioInput'
       responses:
         "201":
-          description: Alimento agregado exitosamente (2xx)
+          description: Alimento agregado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "400":
-          description: Datos de entrada no válidos (4xx - Cliente)
+          description: Datos no válidos
         "500":
-          description: Error interno del servidor (5xx - Servidor)
+          description: Error del servidor
     get:
+      tags:
+        - Inventario
       operationId: listInventoryItems
       summary: Listar alimentos en inventario
       responses:
         "200":
-          description: Lista obtenida exitosamente (2xx)
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "500":
-          description: Error interno del servidor (5xx)
+          description: Error del servidor
 
   /api/inventario/{itemId}:
     get:
+      tags:
+        - Inventario
       operationId: getInventoryItem
       summary: Obtener detalle de un alimento por ID
       parameters:
@@ -257,16 +309,18 @@ paths:
             type: string
       responses:
         "200":
-          description: Detalle obtenido exitosamente (2xx)
+          description: Detalle obtenido exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "404":
-          description: Recurso no encontrado (4xx - Cliente)
+          description: No encontrado
         "500":
-          description: Error interno del servidor (5xx)
+          description: Error del servidor
     put:
+      tags:
+        - Inventario
       operationId: updateInventoryItem
       summary: Actualizar estado o cantidad (Genera historial automático)
       parameters:
@@ -283,18 +337,20 @@ paths:
               $ref: '#/components/schemas/InventarioInput'
       responses:
         "200":
-          description: Actualizado exitosamente (2xx)
+          description: Actualizado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "400":
-          description: Datos inválidos (4xx)
+          description: Datos inválidos
         "404":
-          description: Recurso no encontrado (4xx)
+          description: No encontrado
         "500":
-          description: Error interno del servidor (5xx)
+          description: Error del servidor
     delete:
+      tags:
+        - Inventario
       operationId: deleteInventoryItem
       summary: Eliminar alimento del inventario (Genera historial automático)
       parameters:
@@ -305,32 +361,42 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminado exitosamente (2xx)
+          description: Eliminado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "404":
-          description: Recurso no encontrado (4xx)
+          description: No encontrado
         "500":
-          description: Error interno del servidor (5xx)
+          description: Error del servidor
 
+  # ==========================================
+  # 8. MÓDULO DE HISTORIAL DE INVENTARIO
+  # ==========================================
   /api/historial_inventario:
     get:
+      tags:
+        - Historial de Inventario
       operationId: listInventoryHistory
       summary: Consultar el historial de cambios del inventario
       responses:
         "200":
-          description: Historial obtenido exitosamente (2xx)
+          description: Historial obtenido exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "500":
-          description: Error interno del servidor (5xx)
+          description: Error del servidor
 
+  # ==========================================
+  # 9. MÓDULO DE PATRONES PREDICTIVOS
+  # ==========================================
   /api/patrones_predictivos:
     post:
+      tags:
+        - Patrones Predictivos
       operationId: createPredictivePattern
       summary: Crear un nuevo patrón predictivo de consumo
       requestBody:
@@ -341,30 +407,37 @@ paths:
               $ref: '#/components/schemas/PatronPredictivoInput'
       responses:
         "201":
-          description: Creado exitosamente (2xx)
+          description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "400":
-          description: Datos no válidos (4xx)
+          description: Datos no válidos
         "500":
-          description: Error del servidor (5xx)
+          description: Error del servidor
     get:
+      tags:
+        - Patrones Predictivos
       operationId: getPredictivePatterns
       summary: Obtener patrones predictivos de consumo
       responses:
         "200":
-          description: Obtenido exitosamente (2xx)
+          description: Obtenido exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "500":
-          description: Error del servidor (5xx)
+          description: Error del servidor
 
+  # ==========================================
+  # 10. MÓDULO DE PLANES DE COMIDA (MEAL PREPS)
+  # ==========================================
   /api/meal_preps:
     post:
+      tags:
+        - Planes de Comida (Meal Preps)
       operationId: createMealPrep
       summary: Crear plan de comidas vinculado
       requestBody:
@@ -375,27 +448,29 @@ paths:
               $ref: '#/components/schemas/MealPrepInput'
       responses:
         "201":
-          description: Creado exitosamente (2xx)
+          description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "400":
-          description: Datos no válidos (4xx)
+          description: Datos no válidos
         "500":
-          description: Error del servidor (5xx)
+          description: Error del servidor
     get:
+      tags:
+        - Planes de Comida (Meal Preps)
       operationId: listMealPreps
       summary: Listar planes de comida
       responses:
         "200":
-          description: Listado obtenido exitosamente (2xx)
+          description: Listado obtenido exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "500":
-          description: Error del servidor (5xx)
+          description: Error del servidor
 
 components:
   schemas:
