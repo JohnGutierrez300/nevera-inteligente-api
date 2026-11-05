@@ -191,8 +191,23 @@ app.post('/api/productos', async (req, res) => {
 
 app.get('/api/productos', async (req, res) => {
   try {
-    const productos = await Producto.find().populate('marca_nombre').populate('categoria_nombre');
-    res.status(200).json(responseFormat(true, 'Lista de productos obtenida', productos));
+    const productos = await Producto.find().lean();
+
+    const productosCompletos = await Promise.all(productos.map(async (prod) => {
+      // Buscar la marca por su clave natural de texto (_id)
+      const marca = await Marca.findById(prod.marca_nombre).lean();
+      
+      // Buscar la categoría por su clave natural de texto (_id)
+      const categoria = await Categoria.findById(prod.categoria_nombre).lean();
+
+      return {
+        ...prod,
+        marca_nombre: marca || prod.marca_nombre,
+        categoria_nombre: categoria || prod.categoria_nombre
+      };
+    }));
+
+    res.status(200).json(responseFormat(true, 'Lista de productos obtenida', productosCompletos));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
   }
