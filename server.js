@@ -233,32 +233,33 @@ app.post('/api/inventario', async (req, res) => {
 
 app.get('/api/inventario', async (req, res) => {
   try {
-    const items = await Inventario.find().lean();
-    
-    // Buscar manualmente los datos relacionados para evitar el null de Mongoose
-    const itemsCompletos = await Promise.all(items.map(async (item) => {
+    const inventarios = await Inventario.find().lean();
+
+    const inventariosCompletos = await Promise.all(inventarios.map(async (item) => {
+      // 1. Poblar usuario
       const usuario = await Usuario.findById(item.user_nombre).lean();
-      const producto = await Producto.findById(item.producto_id).lean();
-      const unidad = await UnidadMedida.findById(item.unidad_medida_nombre).lean();
-      
-      let marca = null;
-      let categoria = null;
+
+      // 2. Poblar producto y sus sub-referencias (marca y categoría)
+      let producto = await Producto.findById(item.producto_id).lean();
       if (producto) {
-        marca = await Marca.findById(producto.marca_nombre).lean();
-        categoria = await Categoria.findById(producto.categoria_nombre).lean();
-        producto.marca_nombre = marca;
-        producto.categoria_nombre = categoria;
+        const marca = await Marca.findById(producto.marca_nombre).lean();
+        const categoria = await Categoria.findById(producto.categoria_nombre).lean();
+        producto.marca_nombre = marca || producto.marca_nombre;
+        producto.categoria_nombre = categoria || producto.categoria_nombre;
       }
+
+      // 3. Poblar unidad de medida
+      const unidadMedida = await UnidadMedida.findById(item.unidad_medida_nombre).lean();
 
       return {
         ...item,
         user_nombre: usuario || item.user_nombre,
         producto_id: producto || item.producto_id,
-        unidad_medida_nombre: unidad || item.unidad_medida_nombre
+        unidad_medida_nombre: unidadMedida || item.unidad_medida_nombre
       };
     }));
 
-    res.status(200).json(responseFormat(true, 'Lista de alimentos en inventario', itemsCompletos));
+    res.status(200).json(responseFormat(true, 'Lista de alimentos en inventario', inventariosCompletos));
   } catch (error) {
     res.status(500).json(responseFormat(false, error.message, null));
   }
