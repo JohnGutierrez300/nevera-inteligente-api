@@ -31,34 +31,34 @@ const responseFormat = (success, message, data = null) => ({
 });
 
 // ==========================================
-// MODELOS DE MONGOOSE (Claves Naturales y Árbol)
+// MODELOS DE MONGOOSE (Claves Naturales, Árbol y sin __v)
 // ==========================================
 
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   _id: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password_hash: { type: String, required: true }
-}, { collection: 'usuarios', _id: false }));
+}, { collection: 'usuarios', _id: false, versionKey: false }));
 
 const Categoria = mongoose.model('Categoria', new mongoose.Schema({
   _id: { type: String, required: true }
-}, { collection: 'categorias', _id: false }));
+}, { collection: 'categorias', _id: false, versionKey: false }));
 
 const UnidadMedida = mongoose.model('UnidadMedida', new mongoose.Schema({
   _id: { type: String, required: true },
   abreviatura: { type: String, required: true }
-}, { collection: 'unidades_medida', _id: false }));
+}, { collection: 'unidades_medida', _id: false, versionKey: false }));
 
 const Marca = mongoose.model('Marca', new mongoose.Schema({
   _id: { type: String, required: true }
-}, { collection: 'marcas', _id: false }));
+}, { collection: 'marcas', _id: false, versionKey: false }));
 
 const Producto = mongoose.model('Producto', new mongoose.Schema({
   _id: { type: String, required: true },
   marca_nombre: { type: String, ref: 'Marca', required: true },
   categoria_nombre: { type: String, ref: 'Categoria', required: true },
   nombre: { type: String, required: true }
-}, { collection: 'productos', _id: false }));
+}, { collection: 'productos', _id: false, versionKey: false }));
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
@@ -67,137 +67,134 @@ const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   cantidad: { type: Number, required: true },
   fecha_vencimiento: { type: Date, default: null },
   estado: { type: String, enum: ['EN_NEVERA', 'CONSUMIDO', 'DESPERDICIADO'], default: 'EN_NEVERA' }
-}, { collection: 'inventario' }));
+}, { collection: 'inventario', versionKey: false }));
 
 const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.Schema({
   inventario_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventario', required: true },
   accion: { type: String, enum: ['CREADO', 'ACTUALIZADO', 'ELIMINADO'], required: true },
   detalles: { type: String, required: true },
   fecha: { type: Date, default: Date.now }
-}, { collection: 'historial_inventario' }));
+}, { collection: 'historial_inventario', versionKey: false }));
 
 const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema({
   _id: { type: String, required: true },
   user_nombre: { type: String, ref: 'Usuario', required: true },
   frecuencia_compra_dias: { type: Number },
   probabilidad_desperdicio: { type: Number }
-}, { collection: 'patrones_predictivos', _id: false }));
+}, { collection: 'patrones_predictivos', _id: false, versionKey: false }));
 
 const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
   _id: { type: String, required: true }
-}, { collection: 'ingredientes', _id: false }));
+}, { collection: 'ingredientes', _id: false, versionKey: false }));
 
 const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
   patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true },
   ingrediente_nombre: { type: String, ref: 'Ingrediente', required: true },
   nombre_receta: { type: String, required: true }
-}, { collection: 'meal_preps' }));
+}, { collection: 'meal_preps', versionKey: false }));
 
 // ==========================================
-// RUTAS DE LA API RESTful (TODAS CON POST Y GET)
+// RUTAS DE LA API RESTful
 // ==========================================
 
 // 1. Usuarios
-app.post('/api/usuarios', async (req, res) => {
+app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { nombre, email, password_hash } = req.body;
     const nuevoUsuario = new Usuario({ _id: nombre, email, password_hash });
     await nuevoUsuario.save();
     res.status(201).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.get('/api/usuarios', async (req, res) => {
+app.get('/api/usuarios', async (req, res, next) => {
   try {
     const usuarios = await Usuario.find();
     res.status(200).json(responseFormat(true, 'Lista de usuarios obtenida', usuarios));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
 // 2. Categorías
-app.post('/api/categorias', async (req, res) => {
+app.post('/api/categorias', async (req, res, next) => {
   try {
     const nuevaCategoria = new Categoria(req.body);
     await nuevaCategoria.save();
     res.status(201).json(responseFormat(true, 'Categoría creada exitosamente', nuevaCategoria));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.get('/api/categorias', async (req, res) => {
+app.get('/api/categorias', async (req, res, next) => {
   try {
     const categorias = await Categoria.find();
     res.status(200).json(responseFormat(true, 'Lista de categorías obtenida', categorias));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
 // 3. Marcas
-app.post('/api/marcas', async (req, res) => {
+app.post('/api/marcas', async (req, res, next) => {
   try {
     const nuevaMarca = new Marca(req.body);
     await nuevaMarca.save();
     res.status(201).json(responseFormat(true, 'Marca creada exitosamente', nuevaMarca));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.get('/api/marcas', async (req, res) => {
+app.get('/api/marcas', async (req, res, next) => {
   try {
     const marcas = await Marca.find();
     res.status(200).json(responseFormat(true, 'Lista de marcas obtenida', marcas));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
 // 4. Unidades de Medida
-app.post('/api/unidades_medida', async (req, res) => {
+app.post('/api/unidades_medida', async (req, res, next) => {
   try {
     const nuevaUnidad = new UnidadMedida(req.body);
     await nuevaUnidad.save();
     res.status(201).json(responseFormat(true, 'Unidad de medida creada exitosamente', nuevaUnidad));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.get('/api/unidades_medida', async (req, res) => {
+app.get('/api/unidades_medida', async (req, res, next) => {
   try {
     const unidades = await UnidadMedida.find();
     res.status(200).json(responseFormat(true, 'Lista de unidades de medida obtenida', unidades));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
 // 5. Productos
-app.post('/api/productos', async (req, res) => {
+app.post('/api/productos', async (req, res, next) => {
   try {
     const nuevoProducto = new Producto(req.body);
     await nuevoProducto.save();
     res.status(201).json(responseFormat(true, 'Producto creado exitosamente', nuevoProducto));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.get('/api/productos', async (req, res) => {
+app.get('/api/productos', async (req, res, next) => {
   try {
     const productos = await Producto.find().lean();
 
     const productosCompletos = await Promise.all(productos.map(async (prod) => {
-      // Buscar la marca por su clave natural de texto (_id)
       const marca = await Marca.findById(prod.marca_nombre).lean();
-      
-      // Buscar la categoría por su clave natural de texto (_id)
       const categoria = await Categoria.findById(prod.categoria_nombre).lean();
 
       return {
@@ -209,12 +206,12 @@ app.get('/api/productos', async (req, res) => {
 
     res.status(200).json(responseFormat(true, 'Lista de productos obtenida', productosCompletos));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
 // 6. Inventario (Con Historial Automático)
-app.post('/api/inventario', async (req, res) => {
+app.post('/api/inventario', async (req, res, next) => {
   try {
     const nuevoItem = new Inventario(req.body);
     await nuevoItem.save();
@@ -227,19 +224,17 @@ app.post('/api/inventario', async (req, res) => {
 
     res.status(201).json(responseFormat(true, 'Alimento agregado al inventario', nuevoItem));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.get('/api/inventario', async (req, res) => {
+app.get('/api/inventario', async (req, res, next) => {
   try {
     const inventarios = await Inventario.find().lean();
 
     const inventariosCompletos = await Promise.all(inventarios.map(async (item) => {
-      // 1. Poblar usuario
       const usuario = await Usuario.findById(item.user_nombre).lean();
 
-      // 2. Poblar producto y sus sub-referencias (marca y categoría)
       let producto = await Producto.findById(item.producto_id).lean();
       if (producto) {
         const marca = await Marca.findById(producto.marca_nombre).lean();
@@ -248,7 +243,6 @@ app.get('/api/inventario', async (req, res) => {
         producto.categoria_nombre = categoria || producto.categoria_nombre;
       }
 
-      // 3. Poblar unidad de medida
       const unidadMedida = await UnidadMedida.findById(item.unidad_medida_nombre).lean();
 
       return {
@@ -261,15 +255,17 @@ app.get('/api/inventario', async (req, res) => {
 
     res.status(200).json(responseFormat(true, 'Lista de alimentos en inventario', inventariosCompletos));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.get('/api/inventario/:itemId', async (req, res) => {
+app.get('/api/inventario/:itemId', async (req, res, next) => {
   try {
     const item = await Inventario.findById(req.params.itemId).lean();
     if (!item) {
-      return res.status(404).json(responseFormat(false, 'Alimento no encontrado', null));
+      const err = new Error('Alimento no encontrado');
+      err.statusCode = 404;
+      throw err;
     }
 
     const usuario = await Usuario.findById(item.user_nombre).lean();
@@ -290,15 +286,17 @@ app.get('/api/inventario/:itemId', async (req, res) => {
 
     res.status(200).json(responseFormat(true, 'Detalle del alimento obtenido', itemCompleto));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.put('/api/inventario/:itemId', async (req, res) => {
+app.put('/api/inventario/:itemId', async (req, res, next) => {
   try {
     const itemActualizado = await Inventario.findByIdAndUpdate(req.params.itemId, req.body, { new: true });
     if (!itemActualizado) {
-      return res.status(404).json(responseFormat(false, 'Alimento no encontrado', null));
+      const err = new Error('Alimento no encontrado');
+      err.statusCode = 404;
+      throw err;
     }
 
     await HistorialInventario.create({
@@ -309,15 +307,17 @@ app.put('/api/inventario/:itemId', async (req, res) => {
 
     res.status(200).json(responseFormat(true, 'Alimento actualizado exitosamente', itemActualizado));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.delete('/api/inventario/:itemId', async (req, res) => {
+app.delete('/api/inventario/:itemId', async (req, res, next) => {
   try {
     const itemEliminado = await Inventario.findByIdAndDelete(req.params.itemId);
     if (!itemEliminado) {
-      return res.status(404).json(responseFormat(false, 'Alimento no encontrado', null));
+      const err = new Error('Alimento no encontrado');
+      err.statusCode = 404;
+      throw err;
     }
 
     await HistorialInventario.create({
@@ -328,84 +328,82 @@ app.delete('/api/inventario/:itemId', async (req, res) => {
 
     res.status(200).json(responseFormat(true, 'Alimento eliminado exitosamente', itemEliminado));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
 // 7. Historial de Inventario
-app.get('/api/historial_inventario', async (req, res) => {
+app.get('/api/historial_inventario', async (req, res, next) => {
   try {
     const historial = await HistorialInventario.find().populate('inventario_id');
     res.status(200).json(responseFormat(true, 'Historial de inventario obtenido exitosamente', historial));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
 // 8. Patrones Predictivos
-app.post('/api/patrones_predictivos', async (req, res) => {
+app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const nuevoPatron = new PatronPredictivo(req.body);
     await nuevoPatron.save();
     res.status(201).json(responseFormat(true, 'Patrón predictivo creado exitosamente', nuevoPatron));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.get('/api/patrones_predictivos', async (req, res) => {
+app.get('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const patrones = await PatronPredictivo.find().populate({ path: 'user_nombre', model: 'Usuario' });
     res.status(200).json(responseFormat(true, 'Patrones predictivos obtenidos', patrones));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
 // 9. Ingredientes
-app.post('/api/ingredientes', async (req, res) => {
+app.post('/api/ingredientes', async (req, res, next) => {
   try {
     const nuevoIngrediente = new Ingrediente(req.body);
     await nuevoIngrediente.save();
     res.status(201).json(responseFormat(true, 'Ingrediente creado exitosamente', nuevoIngrediente));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.get('/api/ingredientes', async (req, res) => {
+app.get('/api/ingredientes', async (req, res, next) => {
   try {
     const ingredientes = await Ingrediente.find();
     res.status(200).json(responseFormat(true, 'Lista de ingredientes obtenida', ingredientes));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
 // 10. Meal Preps
-app.post('/api/meal_preps', async (req, res) => {
+app.post('/api/meal_preps', async (req, res, next) => {
   try {
     const nuevoMealPrep = new MealPrep(req.body);
     await nuevoMealPrep.save();
     res.status(201).json(responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-app.get('/api/meal_preps', async (req, res) => {
+app.get('/api/meal_preps', async (req, res, next) => {
   try {
     const mealPreps = await MealPrep.find().lean();
     
     const mealPrepsCompletos = await Promise.all(mealPreps.map(async (prep) => {
-      // Buscar el patrón predictivo y poblar su usuario manualmente
       let patron = await PatronPredictivo.findById(prep.patron_predictivo_id).lean();
       if (patron) {
         const usuario = await Usuario.findById(patron.user_nombre).lean();
         patron.user_nombre = usuario || patron.user_nombre;
       }
 
-      // Buscar el ingrediente por su clave natural de texto
       const ingrediente = await Ingrediente.findById(prep.ingrediente_nombre).lean();
 
       return {
@@ -415,21 +413,18 @@ app.get('/api/meal_preps', async (req, res) => {
       };
     }));
 
-    res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPrepsCompletos));
+    res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPrepsCompletOS = mealPrepsCompletos));
   } catch (error) {
-    res.status(500).json(responseFormat(false, error.message, null));
+    next(error);
   }
 });
 
-// Inicialización del Servidor
-const PORT = process.env.PORT || 3000;
 // ==========================================
 // MIDDLEWARE GLOBAL DE MANEJO DE ERRORES ("FUERA DE BASE")
 // ==========================================
 app.use((err, req, res, next) => {
   console.error("Error detectado:", err.message);
   
-  // Determinar si es un error de validación o un error interno del servidor
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Error interno del servidor';
 
@@ -439,6 +434,9 @@ app.use((err, req, res, next) => {
     data: null
   });
 });
+
+// Inicialización del Servidor
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
   console.log(`Documentación interactiva disponible en http://localhost:${PORT}/api-docs`);
