@@ -34,8 +34,10 @@ const responseFormat = (success, message, data = null) => ({
 // MODELOS DE MONGOOSE (IDs Numéricos, Multinevera y sin __v)
 // ==========================================
 
+// Modelo de Usuario actualizado con _id y nombre explícito
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
-  _id: { type: String, required: true },
+  _id: { type: String, required: true }, // Ej: "1"
+  nombre: { type: String, required: true }, // El nombre real guardado en BD
   email: { type: String, required: true, unique: true },
   password_hash: { type: String, required: true }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
@@ -99,10 +101,16 @@ const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
 // ==========================================
 
 // 1. Usuarios
+// Ruta POST de Usuario corregida
 app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
-    const nuevoUsuario = new Usuario({ _id: id || nombre, email, password_hash });
+    const nuevoUsuario = new Usuario({ 
+      _id: id || nombre, // Usa el id proporcionado o el nombre como clave si no viene id
+      nombre, 
+      email, 
+      password_hash 
+    });
     await nuevoUsuario.save();
     res.status(201).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
   } catch (error) {
