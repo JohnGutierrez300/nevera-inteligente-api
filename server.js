@@ -35,9 +35,10 @@ const responseFormat = (success, message, data = null) => ({
 // ==========================================
 
 // Modelo de Usuario actualizado con _id y nombre explícito
+// 1. Esquema de Usuario con 'nombre' único
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
-  _id: { type: String, required: true }, // Ej: "1"
-  nombre: { type: String, required: true }, // El nombre real guardado en BD
+  _id: { type: String, required: true },
+  nombre: { type: String, required: true, unique: true }, // <-- Evita nombres duplicados
   email: { type: String, required: true, unique: true },
   password_hash: { type: String, required: true }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
@@ -101,12 +102,12 @@ const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
 // ==========================================
 
 // 1. Usuarios
-// Ruta POST de Usuario corregida
+// 2. Ruta POST de Usuarios
 app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
     const nuevoUsuario = new Usuario({ 
-      _id: id || nombre, // Usa el id proporcionado o el nombre como clave si no viene id
+      _id: id || nombre, 
       nombre, 
       email, 
       password_hash 
@@ -114,6 +115,11 @@ app.post('/api/usuarios', async (req, res, next) => {
     await nuevoUsuario.save();
     res.status(201).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
   } catch (error) {
+    // Si MongoDB detecta duplicidad en nombre o email, personalizamos el mensaje
+    if (error.code === 11000) {
+      error.statusCode = 400;
+      error.message = 'El nombre de usuario o el correo electrónico ya se encuentran registrados.';
+    }
     next(error);
   }
 });
