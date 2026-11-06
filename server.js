@@ -35,26 +35,26 @@ const responseFormat = (success, message, data = null) => ({
 // ==========================================
 
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
-  _id: { type: String, required: true }, // Ej: "1", "2" o identificador numérico
+  _id: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password_hash: { type: String, required: true }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
 
 const Categoria = mongoose.model('Categoria', new mongoose.Schema({
-  _id: { type: String, required: true } // Ej: "1"
+  _id: { type: String, required: true }
 }, { collection: 'categorias', _id: false, versionKey: false }));
 
 const UnidadMedida = mongoose.model('UnidadMedida', new mongoose.Schema({
-  _id: { type: String, required: true }, // Ej: "1" o "Litros"
+  _id: { type: String, required: true },
   abreviatura: { type: String, required: true }
 }, { collection: 'unidades_medida', _id: false, versionKey: false }));
 
 const Marca = mongoose.model('Marca', new mongoose.Schema({
-  _id: { type: String, required: true } // Ej: "10"
+  _id: { type: String, required: true }
 }, { collection: 'marcas', _id: false, versionKey: false }));
 
 const Producto = mongoose.model('Producto', new mongoose.Schema({
-  _id: { type: String, required: true }, // Ej: "101"
+  _id: { type: String, required: true },
   marca_nombre: { type: String, ref: 'Marca', required: true },
   categoria_nombre: { type: String, ref: 'Categoria', required: true },
   nombre: { type: String, required: true }
@@ -62,7 +62,7 @@ const Producto = mongoose.model('Producto', new mongoose.Schema({
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
-  nevera_id: { type: String, required: true, default: 'NEVERA-01' }, // Soporte para múltiples neveras
+  nevera_id: { type: String, required: true, default: 'NEVERA-01' },
   producto_id: { type: String, ref: 'Producto', required: true },
   unidad_medida_nombre: { type: String, ref: 'UnidadMedida', required: true },
   cantidad: { type: Number, required: true },
@@ -78,14 +78,14 @@ const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.S
 }, { collection: 'historial_inventario', versionKey: false }));
 
 const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema({
-  _id: { type: String, required: true }, // Ej: "1"
+  _id: { type: String, required: true },
   user_nombre: { type: String, ref: 'Usuario', required: true },
   frecuencia_compra_dias: { type: Number },
   probabilidad_desperdicio: { type: Number }
 }, { collection: 'patrones_predictivos', _id: false, versionKey: false }));
 
 const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
-  _id: { type: String, required: true } // Ej: "1"
+  _id: { type: String, required: true }
 }, { collection: 'ingredientes', _id: false, versionKey: false }));
 
 const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
@@ -168,6 +168,20 @@ app.get('/api/marcas', async (req, res, next) => {
   try {
     const marcas = await Marca.find();
     res.status(200).json(responseFormat(true, 'Lista de marcas obtenida', marcas));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/marcas/:id', async (req, res, next) => {
+  try {
+    const marcaEliminada = await Marca.findByIdAndDelete(req.params.id);
+    if (!marcaEliminada) {
+      const err = new Error('Marca no encontrada');
+      err.statusCode = 404;
+      throw err;
+    }
+    res.status(200).json(responseFormat(true, 'Marca eliminada exitosamente', marcaEliminada));
   } catch (error) {
     next(error);
   }
@@ -259,7 +273,6 @@ app.post('/api/inventario', async (req, res, next) => {
 
 app.get('/api/inventario', async (req, res, next) => {
   try {
-    // Permite filtrar opcionalmente por nevera (?nevera_id=NEVERA-02)
     const filtro = req.query.nevera_id ? { nevera_id: req.query.nevera_id } : {};
     const inventarios = await Inventario.find(filtro).lean();
 
@@ -408,6 +421,20 @@ app.get('/api/ingredientes', async (req, res, next) => {
   try {
     const ingredientes = await Ingrediente.find();
     res.status(200).json(responseFormat(true, 'Lista de ingredientes obtenida', ingredientes));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/ingredientes/:id', async (req, res, next) => {
+  try {
+    const ingredienteEliminado = await Ingrediente.findByIdAndDelete(req.params.id);
+    if (!ingredienteEliminado) {
+      const err = new Error('Ingrediente no encontrado');
+      err.statusCode = 404;
+      throw err;
+    }
+    res.status(200).json(responseFormat(true, 'Ingrediente eliminado exitosamente', ingredienteEliminado));
   } catch (error) {
     next(error);
   }

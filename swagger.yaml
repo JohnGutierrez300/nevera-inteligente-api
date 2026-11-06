@@ -155,6 +155,30 @@ paths:
         "500":
           description: Error del servidor
 
+  /api/marcas/{id}:
+    delete:
+      tags:
+        - Marcas
+      operationId: deleteBrand
+      summary: Eliminar una marca por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Marca eliminada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        "404":
+          description: Marca no encontrada
+        "500":
+          description: Error del servidor
+
   # ==========================================
   # 4. MÓDULO DE UNIDADES DE MEDIDA
   # ==========================================
@@ -234,6 +258,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error del servidor
+
+  /api/ingredientes/{id}:
+    delete:
+      tags:
+        - Ingredientes
+      operationId: deleteIngredient
+      summary: Eliminar un ingrediente por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ingrediente eliminado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        "404":
+          description: Ingrediente no encontrado
         "500":
           description: Error del servidor
 
