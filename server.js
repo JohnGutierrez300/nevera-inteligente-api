@@ -31,30 +31,30 @@ const responseFormat = (success, message, data = null) => ({
 });
 
 // ==========================================
-// MODELOS DE MONGOOSE (Claves Naturales, Árbol y sin __v)
+// MODELOS DE MONGOOSE (IDs Numéricos, Multinevera y sin __v)
 // ==========================================
 
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
-  _id: { type: String, required: true },
+  _id: { type: String, required: true }, // Ej: "1", "2" o identificador numérico
   email: { type: String, required: true, unique: true },
   password_hash: { type: String, required: true }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
 
 const Categoria = mongoose.model('Categoria', new mongoose.Schema({
-  _id: { type: String, required: true }
+  _id: { type: String, required: true } // Ej: "1"
 }, { collection: 'categorias', _id: false, versionKey: false }));
 
 const UnidadMedida = mongoose.model('UnidadMedida', new mongoose.Schema({
-  _id: { type: String, required: true },
+  _id: { type: String, required: true }, // Ej: "1" o "Litros"
   abreviatura: { type: String, required: true }
 }, { collection: 'unidades_medida', _id: false, versionKey: false }));
 
 const Marca = mongoose.model('Marca', new mongoose.Schema({
-  _id: { type: String, required: true }
+  _id: { type: String, required: true } // Ej: "10"
 }, { collection: 'marcas', _id: false, versionKey: false }));
 
 const Producto = mongoose.model('Producto', new mongoose.Schema({
-  _id: { type: String, required: true },
+  _id: { type: String, required: true }, // Ej: "101"
   marca_nombre: { type: String, ref: 'Marca', required: true },
   categoria_nombre: { type: String, ref: 'Categoria', required: true },
   nombre: { type: String, required: true }
@@ -62,6 +62,7 @@ const Producto = mongoose.model('Producto', new mongoose.Schema({
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
+  nevera_id: { type: String, required: true, default: 'NEVERA-01' }, // Soporte para múltiples neveras
   producto_id: { type: String, ref: 'Producto', required: true },
   unidad_medida_nombre: { type: String, ref: 'UnidadMedida', required: true },
   cantidad: { type: Number, required: true },
@@ -77,14 +78,14 @@ const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.S
 }, { collection: 'historial_inventario', versionKey: false }));
 
 const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema({
-  _id: { type: String, required: true },
+  _id: { type: String, required: true }, // Ej: "1"
   user_nombre: { type: String, ref: 'Usuario', required: true },
   frecuencia_compra_dias: { type: Number },
   probabilidad_desperdicio: { type: Number }
 }, { collection: 'patrones_predictivos', _id: false, versionKey: false }));
 
 const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
-  _id: { type: String, required: true }
+  _id: { type: String, required: true } // Ej: "1"
 }, { collection: 'ingredientes', _id: false, versionKey: false }));
 
 const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
@@ -100,8 +101,8 @@ const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
 // 1. Usuarios
 app.post('/api/usuarios', async (req, res, next) => {
   try {
-    const { nombre, email, password_hash } = req.body;
-    const nuevoUsuario = new Usuario({ _id: nombre, email, password_hash });
+    const { id, nombre, email, password_hash } = req.body;
+    const nuevoUsuario = new Usuario({ _id: id || nombre, email, password_hash });
     await nuevoUsuario.save();
     res.status(201).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
   } catch (error) {
@@ -113,6 +114,20 @@ app.get('/api/usuarios', async (req, res, next) => {
   try {
     const usuarios = await Usuario.find();
     res.status(200).json(responseFormat(true, 'Lista de usuarios obtenida', usuarios));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/usuarios/:id', async (req, res, next) => {
+  try {
+    const usuarioEliminado = await Usuario.findByIdAndDelete(req.params.id);
+    if (!usuarioEliminado) {
+      const err = new Error('Usuario no encontrado');
+      err.statusCode = 404;
+      throw err;
+    }
+    res.status(200).json(responseFormat(true, 'Usuario eliminado exitosamente', usuarioEliminado));
   } catch (error) {
     next(error);
   }
@@ -210,7 +225,21 @@ app.get('/api/productos', async (req, res, next) => {
   }
 });
 
-// 6. Inventario (Con Historial Automático)
+app.delete('/api/productos/:id', async (req, res, next) => {
+  try {
+    const productoEliminado = await Producto.findByIdAndDelete(req.params.id);
+    if (!productoEliminado) {
+      const err = new Error('Producto no encontrado');
+      err.statusCode = 404;
+      throw err;
+    }
+    res.status(200).json(responseFormat(true, 'Producto eliminado exitosamente', productoEliminado));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 6. Inventario (Con Historial Automático y Soporte de Multinevera)
 app.post('/api/inventario', async (req, res, next) => {
   try {
     const nuevoItem = new Inventario(req.body);
@@ -219,7 +248,7 @@ app.post('/api/inventario', async (req, res, next) => {
     await HistorialInventario.create({
       inventario_id: nuevoItem._id,
       accion: 'CREADO',
-      detalles: `Se agregó el alimento al inventario con estado ${nuevoItem.estado}`
+      detalles: `Se agregó el alimento a la nevera ${nuevoItem.nevera_id} con estado ${nuevoItem.estado}`
     });
 
     res.status(201).json(responseFormat(true, 'Alimento agregado al inventario', nuevoItem));
@@ -230,7 +259,9 @@ app.post('/api/inventario', async (req, res, next) => {
 
 app.get('/api/inventario', async (req, res, next) => {
   try {
-    const inventarios = await Inventario.find().lean();
+    // Permite filtrar opcionalmente por nevera (?nevera_id=NEVERA-02)
+    const filtro = req.query.nevera_id ? { nevera_id: req.query.nevera_id } : {};
+    const inventarios = await Inventario.find(filtro).lean();
 
     const inventariosCompletos = await Promise.all(inventarios.map(async (item) => {
       const usuario = await Usuario.findById(item.user_nombre).lean();
@@ -302,7 +333,7 @@ app.put('/api/inventario/:itemId', async (req, res, next) => {
     await HistorialInventario.create({
       inventario_id: itemActualizado._id,
       accion: 'ACTUALIZADO',
-      detalles: `Se actualizó el alimento. Estado: ${itemActualizado.estado}, Cantidad: ${itemActualizado.cantidad}`
+      detalles: `Se actualizó el alimento en la nevera ${itemActualizado.nevera_id}. Estado: ${itemActualizado.estado}, Cantidad: ${itemActualizado.cantidad}`
     });
 
     res.status(200).json(responseFormat(true, 'Alimento actualizado exitosamente', itemActualizado));
@@ -413,7 +444,7 @@ app.get('/api/meal_preps', async (req, res, next) => {
       };
     }));
 
-    res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPrepsCompletOS = mealPrepsCompletos));
+    res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPrepsCompletos));
   } catch (error) {
     next(error);
   }
