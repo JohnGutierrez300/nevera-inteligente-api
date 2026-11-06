@@ -49,6 +49,30 @@ paths:
         "500":
           description: Error del servidor
 
+  /api/usuarios/{id}:
+    delete:
+      tags:
+        - Usuarios
+      operationId: deleteUser
+      summary: Eliminar un usuario por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Usuario eliminado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        "404":
+          description: Usuario no encontrado
+        "500":
+          description: Error del servidor
+
   # ==========================================
   # 2. MÓDULO DE CATEGORÍAS
   # ==========================================
@@ -254,6 +278,30 @@ paths:
         "500":
           description: Error del servidor
 
+  /api/productos/{id}:
+    delete:
+      tags:
+        - Productos
+      operationId: deleteProduct
+      summary: Eliminar un producto por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Producto eliminado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        "404":
+          description: Producto no encontrado
+        "500":
+          description: Error del servidor
+
   # ==========================================
   # 7. MÓDULO DE INVENTARIO
   # ==========================================
@@ -284,7 +332,14 @@ paths:
       tags:
         - Inventario
       operationId: listInventoryItems
-      summary: Listar alimentos en inventario
+      summary: Listar alimentos en inventario (opcionalmente filtrado por nevera_id)
+      parameters:
+        - name: nevera_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filtrar por ID de nevera específica
       responses:
         "200":
           description: Lista obtenida exitosamente
@@ -488,9 +543,12 @@ components:
     UsuarioInput:
       type: object
       properties:
+        id:
+          type: string
+          description: Identificador único del usuario (PK)
         nombre:
           type: string
-          description: Nombre del usuario (Actúa como Clave Primaria)
+          description: Nombre del usuario
         email:
           type: string
           format: email
@@ -533,13 +591,13 @@ components:
       properties:
         _id:
           type: string
-          description: Código personalizado del producto (Ej. P-01)
+          description: Código personalizado del producto (Ej. 101)
         marca_nombre:
           type: string
-          description: Nombre de la marca (FK)
+          description: Nombre o ID de la marca (FK)
         categoria_nombre:
           type: string
-          description: Nombre de la categoría (FK)
+          description: Nombre o ID de la categoría (FK)
         nombre:
           type: string
           description: Nombre específico del producto
@@ -549,10 +607,13 @@ components:
       properties:
         user_nombre:
           type: string
-          description: Nombre del usuario dueño (FK)
+          description: ID del usuario dueño (FK)
+        nevera_id:
+          type: string
+          description: Identificador de la nevera (Ej. NEVERA-01, NEVERA-FINCA)
         producto_id:
           type: string
-          description: Código personalizado del producto (Ej. P-01)
+          description: Código personalizado del producto (Ej. 101)
         unidad_medida_nombre:
           type: string
           description: Nombre de la unidad de medida (FK)
@@ -575,10 +636,10 @@ components:
       properties:
         _id:
           type: string
-          description: Código personalizado del patrón (Ej. PAT-01)
+          description: Código personalizado del patrón (Ej. 1)
         user_nombre:
           type: string
-          description: Nombre del usuario evaluado (FK)
+          description: ID del usuario evaluado (FK)
         frecuencia_compra_dias:
           type: number
           description: Frecuencia estimada de compra en días
@@ -591,7 +652,7 @@ components:
       properties:
         patron_predictivo_id:
           type: string
-          description: Código del patrón predictivo (Ej. PAT-01)
+          description: Código del patrón predictivo (Ej. 1)
         ingrediente_nombre:
           type: string
           description: Nombre del ingrediente base (FK)
