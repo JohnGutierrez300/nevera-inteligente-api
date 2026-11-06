@@ -34,11 +34,9 @@ const responseFormat = (success, message, data = null) => ({
 // MODELOS DE MONGOOSE (IDs Numéricos, Multinevera y sin __v)
 // ==========================================
 
-// Modelo de Usuario actualizado con _id y nombre explícito
-// 1. Esquema de Usuario con 'nombre' único
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   _id: { type: String, required: true },
-  nombre: { type: String, required: true, unique: true }, // <-- Evita nombres duplicados
+  nombre: { type: String, required: true, unique: true },
   email: { type: String, required: true, unique: true },
   password_hash: { type: String, required: true }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
@@ -73,8 +71,10 @@ const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   estado: { type: String, enum: ['EN_NEVERA', 'CONSUMIDO', 'DESPERDICIADO'], default: 'EN_NEVERA' }
 }, { collection: 'inventario', versionKey: false }));
 
+// Historial mejorado con snapshot para asegurar que la info no se pierda al eliminar
 const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.Schema({
-  inventario_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventario', required: true },
+  inventario_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventario' },
+  snapshot_datos: { type: Object, default: null }, // Seguro permanente de los datos
   accion: { type: String, enum: ['CREADO', 'ACTUALIZADO', 'ELIMINADO'], required: true },
   detalles: { type: String, required: true },
   fecha: { type: Date, default: Date.now }
@@ -102,7 +102,6 @@ const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
 // ==========================================
 
 // 1. Usuarios
-// 2. Ruta POST de Usuarios
 app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
@@ -115,7 +114,6 @@ app.post('/api/usuarios', async (req, res, next) => {
     await nuevoUsuario.save();
     res.status(201).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
   } catch (error) {
-    // Si MongoDB detecta duplicidad en nombre o email, personalizamos el mensaje
     if (error.code === 11000) {
       error.statusCode = 400;
       error.message = 'El nombre de usuario o el correo electrónico ya se encuentran registrados.';
@@ -267,7 +265,7 @@ app.delete('/api/productos/:id', async (req, res, next) => {
   }
 });
 
-// 6. Inventario (Con Historial Automático y Soporte de Multinevera)
+// 6. Inventario (Con Historial con Snapshot y Soporte de Multinevera)
 app.post('/api/inventario', async (req, res, next) => {
   try {
     const nuevoItem = new Inventario(req.body);
@@ -275,6 +273,7 @@ app.post('/api/inventario', async (req, res, next) => {
 
     await HistorialInventario.create({
       inventario_id: nuevoItem._id,
+      snapshot_datos: nuevoItem.toObject(),
       accion: 'CREADO',
       detalles: `Se agregó el alimento a la nevera ${nuevoItem.nevera_id} con estado ${nuevoItem.estado}`
     });
@@ -359,6 +358,7 @@ app.put('/api/inventario/:itemId', async (req, res, next) => {
 
     await HistorialInventario.create({
       inventario_id: itemActualizado._id,
+      snapshot_datos: itemActualizado.toObject(),
       accion: 'ACTUALIZADO',
       detalles: `Se actualizó el alimento en la nevera ${itemActualizado.nevera_id}. Estado: ${itemActualizado.estado}, Cantidad: ${itemActualizado.cantidad}`
     });
@@ -378,8 +378,10 @@ app.delete('/api/inventario/:itemId', async (req, res, next) => {
       throw err;
     }
 
+    // Guarda el snapshot completo antes de eliminar para mantener el historial intacto
     await HistorialInventario.create({
       inventario_id: itemEliminado._id,
+      snapshot_datos: itemEliminado.toObject(),
       accion: 'ELIMINADO',
       detalles: `Se eliminó físicamente el alimento del inventario`
     });
@@ -393,7 +395,7 @@ app.delete('/api/inventario/:itemId', async (req, res, next) => {
 // 7. Historial de Inventario
 app.get('/api/historial_inventario', async (req, res, next) => {
   try {
-    const historial = await HistorialInventario.find().populate('inventario_id');
+    const historial = await HistorialInventario.find().lean();
     res.status(200).json(responseFormat(true, 'Historial de inventario obtenido exitosamente', historial));
   } catch (error) {
     next(error);
