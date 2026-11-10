@@ -31,7 +31,7 @@ const responseFormat = (success, message, data = null) => ({
 });
 
 // ==========================================
-// MODELOS DE MONGOOSE (IDs Numéricos, Multinevera y sin __v)
+// MODELOS DE MONGOOSE
 // ==========================================
 
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
@@ -62,7 +62,7 @@ const Producto = mongoose.model('Producto', new mongoose.Schema({
 }, { collection: 'productos', _id: false, versionKey: false }));
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
-  user_nombre: { type: String, ref: 'Usuario', required: true },
+  user_nombre: { type: String, ref: 'Usuario', required: true }, // Aislamiento por usuario
   nevera_id: { type: String, required: true, default: 'NEVERA-01' },
   producto_id: { type: String, ref: 'Producto', required: true },
   unidad_medida_nombre: { type: String, ref: 'UnidadMedida', required: true },
@@ -71,10 +71,9 @@ const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   estado: { type: String, enum: ['EN_NEVERA', 'CONSUMIDO', 'DESPERDICIADO'], default: 'EN_NEVERA' }
 }, { collection: 'inventario', versionKey: false }));
 
-// Historial mejorado con snapshot para asegurar que la info no se pierda al eliminar
 const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.Schema({
   inventario_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventario' },
-  snapshot_datos: { type: Object, default: null }, // Seguro permanente de los datos
+  snapshot_datos: { type: Object, default: null },
   accion: { type: String, enum: ['CREADO', 'ACTUALIZADO', 'ELIMINADO'], required: true },
   detalles: { type: String, required: true },
   fecha: { type: Date, default: Date.now }
@@ -97,14 +96,32 @@ const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
   nombre_receta: { type: String, required: true }
 }, { collection: 'meal_preps', versionKey: false }));
 
+// Nuevo Modelo de Notificaciones
+const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
+  user_nombre: { type: String, ref: 'Usuario', required: true },
+  mensaje: { type: String, required: true },
+  tipo: { type: String, enum: ['VENCIMIENTO', 'STOCK_BAJO', 'SUGERENCIA'], default: 'SUGERENCIA' },
+  leida: { type: Boolean, default: false },
+  fecha: { type: Date, default: Date.now }
+}, { collection: 'notificaciones', versionKey: false }));
+
 // ==========================================
 // RUTAS DE LA API RESTful
 // ==========================================
 
-// 1. Usuarios
+// 1. Usuarios (Sin duplicados y validación estricta)
 app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
+    
+    // Validación previa para prevenir duplicados por nombre o email
+    const usuarioExistente = await Usuario.findOne({ $or: [{ _id: id || nombre }, { nombre }, { email }] });
+    if (usuarioExistente) {
+      const err = new Error('El nombre de usuario, ID o correo electrónico ya se encuentran registrados.');
+      err.statusCode = 400;
+      throw err;
+    }
+
     const nuevoUsuario = new Usuario({ 
       _id: id || nombre, 
       nombre, 
@@ -114,10 +131,6 @@ app.post('/api/usuarios', async (req, res, next) => {
     await nuevoUsuario.save();
     res.status(201).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
   } catch (error) {
-    if (error.code === 11000) {
-      error.statusCode = 400;
-      error.message = 'El nombre de usuario o el correo electrónico ya se encuentran registrados.';
-    }
     next(error);
   }
 });
@@ -233,18 +246,15 @@ app.post('/api/productos', async (req, res, next) => {
 app.get('/api/productos', async (req, res, next) => {
   try {
     const productos = await Producto.find().lean();
-
     const productosCompletos = await Promise.all(productos.map(async (prod) => {
       const marca = await Marca.findById(prod.marca_nombre).lean();
       const categoria = await Categoria.findById(prod.categoria_nombre).lean();
-
       return {
         ...prod,
         marca_nombre: marca || prod.marca_nombre,
         categoria_nombre: categoria || prod.categoria_nombre
       };
     }));
-
     res.status(200).json(responseFormat(true, 'Lista de productos obtenida', productosCompletos));
   } catch (error) {
     next(error);
@@ -265,7 +275,7 @@ app.delete('/api/productos/:id', async (req, res, next) => {
   }
 });
 
-// 6. Inventario (Con Historial con Snapshot y Soporte de Multinevera)
+// 6. Inventario (Filtrado estricto por usuario y nevera_id)
 app.post('/api/inventario', async (req, res, next) => {
   try {
     const nuevoItem = new Inventario(req.body);
@@ -275,7 +285,7 @@ app.post('/api/inventario', async (req, res, next) => {
       inventario_id: nuevoItem._id,
       snapshot_datos: nuevoItem.toObject(),
       accion: 'CREADO',
-      detalles: `Se agregó el alimento a la nevera ${nuevoItem.nevera_id} con estado ${nuevoItem.estado}`
+      detalles: `Se agregó el alimento a la nevera ${nuevoItem.nevera_id} del usuario ${nuevoItem.user_nombre}`
     });
 
     res.status(201).json(responseFormat(true, 'Alimento agregado al inventario', nuevoItem));
@@ -286,12 +296,15 @@ app.post('/api/inventario', async (req, res, next) => {
 
 app.get('/api/inventario', async (req, res, next) => {
   try {
-    const filtro = req.query.nevera_id ? { nevera_id: req.query.nevera_id } : {};
+    // Permite filtrar por usuario y nevera para mantener el aislamiento completo
+    const filtro = {};
+    if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
+    if (req.query.nevera_id) filtro.nevera_id = req.query.nevera_id;
+
     const inventarios = await Inventario.find(filtro).lean();
 
     const inventariosCompletos = await Promise.all(inventarios.map(async (item) => {
       const usuario = await Usuario.findById(item.user_nombre).lean();
-
       let producto = await Producto.findById(item.producto_id).lean();
       if (producto) {
         const marca = await Marca.findById(producto.marca_nombre).lean();
@@ -299,7 +312,6 @@ app.get('/api/inventario', async (req, res, next) => {
         producto.marca_nombre = marca || producto.marca_nombre;
         producto.categoria_nombre = categoria || producto.categoria_nombre;
       }
-
       const unidadMedida = await UnidadMedida.findById(item.unidad_medida_nombre).lean();
 
       return {
@@ -324,24 +336,7 @@ app.get('/api/inventario/:itemId', async (req, res, next) => {
       err.statusCode = 404;
       throw err;
     }
-
-    const usuario = await Usuario.findById(item.user_nombre).lean();
-    const producto = await Producto.findById(item.producto_id).lean();
-    const unidad = await UnidadMedida.findById(item.unidad_medida_nombre).lean();
-
-    if (producto) {
-      producto.marca_nombre = await Marca.findById(producto.marca_nombre).lean();
-      producto.categoria_nombre = await Categoria.findById(producto.categoria_nombre).lean();
-    }
-
-    const itemCompleto = {
-      ...item,
-      user_nombre: usuario || item.user_nombre,
-      producto_id: producto || item.producto_id,
-      unidad_medida_nombre: unidad || item.unidad_medida_nombre
-    };
-
-    res.status(200).json(responseFormat(true, 'Detalle del alimento obtenido', itemCompleto));
+    res.status(200).json(responseFormat(true, 'Detalle del alimento obtenido', item));
   } catch (error) {
     next(error);
   }
@@ -360,7 +355,7 @@ app.put('/api/inventario/:itemId', async (req, res, next) => {
       inventario_id: itemActualizado._id,
       snapshot_datos: itemActualizado.toObject(),
       accion: 'ACTUALIZADO',
-      detalles: `Se actualizó el alimento en la nevera ${itemActualizado.nevera_id}. Estado: ${itemActualizado.estado}, Cantidad: ${itemActualizado.cantidad}`
+      detalles: `Se actualizó el alimento del usuario ${itemActualizado.user_nombre}`
     });
 
     res.status(200).json(responseFormat(true, 'Alimento actualizado exitosamente', itemActualizado));
@@ -378,7 +373,6 @@ app.delete('/api/inventario/:itemId', async (req, res, next) => {
       throw err;
     }
 
-    // Guarda el snapshot completo antes de eliminar para mantener el historial intacto
     await HistorialInventario.create({
       inventario_id: itemEliminado._id,
       snapshot_datos: itemEliminado.toObject(),
@@ -415,7 +409,8 @@ app.post('/api/patrones_predictivos', async (req, res, next) => {
 
 app.get('/api/patrones_predictivos', async (req, res, next) => {
   try {
-    const patrones = await PatronPredictivo.find().populate({ path: 'user_nombre', model: 'Usuario' });
+    const filtro = req.query.user_nombre ? { user_nombre: req.query.user_nombre } : {};
+    const patrones = await PatronPredictivo.find(filtro).populate({ path: 'user_nombre', model: 'Usuario' });
     res.status(200).json(responseFormat(true, 'Patrones predictivos obtenidos', patrones));
   } catch (error) {
     next(error);
@@ -470,35 +465,53 @@ app.post('/api/meal_preps', async (req, res, next) => {
 app.get('/api/meal_preps', async (req, res, next) => {
   try {
     const mealPreps = await MealPrep.find().lean();
-    
-    const mealPrepsCompletos = await Promise.all(mealPreps.map(async (prep) => {
-      let patron = await PatronPredictivo.findById(prep.patron_predictivo_id).lean();
-      if (patron) {
-        const usuario = await Usuario.findById(patron.user_nombre).lean();
-        patron.user_nombre = usuario || patron.user_nombre;
-      }
+    res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPreps));
+  } catch (error) {
+    next(error);
+  }
+});
 
-      const ingrediente = await Ingrediente.findById(prep.ingrediente_nombre).lean();
+// 11. Notificaciones (Nuevo Módulo Inteligente)
+app.post('/api/notificaciones', async (req, res, next) => {
+  try {
+    const nuevaNoti = new Notificacion(req.body);
+    await nuevaNoti.save();
+    res.status(201).json(responseFormat(true, 'Notificación creada exitosamente', nuevaNoti));
+  } catch (error) {
+    next(error);
+  }
+});
 
-      return {
-        ...prep,
-        patron_predictivo_id: patron || prep.patron_predictivo_id,
-        ingrediente_nombre: ingrediente || prep.ingrediente_nombre
-      };
-    }));
+app.get('/api/notificaciones', async (req, res, next) => {
+  try {
+    // Filtrar notificaciones específicamente por usuario (?user_nombre=john)
+    const filtro = req.query.user_nombre ? { user_nombre: req.query.user_nombre } : {};
+    const notificaciones = await Notificacion.find(filtro).lean();
+    res.status(200).json(responseFormat(true, 'Notificaciones obtenidas exitosamente', notificaciones));
+  } catch (error) {
+    next(error);
+  }
+});
 
-    res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPrepsCompletos));
+app.delete('/api/notificaciones/:id', async (req, res, next) => {
+  try {
+    const notiEliminada = await Notificacion.findByIdAndDelete(req.params.id);
+    if (!notiEliminada) {
+      const err = new Error('Notificación no encontrada');
+      err.statusCode = 404;
+      throw err;
+    }
+    res.status(200).json(responseFormat(true, 'Notificación eliminada exitosamente', notiEliminada));
   } catch (error) {
     next(error);
   }
 });
 
 // ==========================================
-// MIDDLEWARE GLOBAL DE MANEJO DE ERRORES ("FUERA DE BASE")
+// MIDDLEWARE GLOBAL DE MANEJO DE ERRORES
 // ==========================================
 app.use((err, req, res, next) => {
   console.error("Error detectado:", err.message);
-  
   const statusCode = err.statusCode || 500;
   const message = err.message || 'Error interno del servidor';
 
