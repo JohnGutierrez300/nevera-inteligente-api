@@ -232,10 +232,34 @@ app.get('/api/unidades_medida', async (req, res, next) => {
   }
 });
 
-// 5. Productos
+// 5. Productos (Con validación estricta de existencia para Marca y Categoría)
 app.post('/api/productos', async (req, res, next) => {
   try {
-    const nuevoProducto = new Producto(req.body);
+    const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
+
+    // Validar si la marca existe previamente
+    const marcaExiste = await Marca.findById(marca_nombre);
+    if (!marcaExiste) {
+      const err = new Error(`La marca '${marca_nombre}' no se encuentra registrada. Debe crearla primero.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Validar si la categoría existe previamente
+    const categoriaExiste = await Categoria.findById(categoria_nombre);
+    if (!categoriaExiste) {
+      const err = new Error(`La categoría '${categoria_nombre}' no se encuentra registrada. Debe crearla primero.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const nuevoProducto = new Producto({
+      _id,
+      marca_nombre,
+      categoria_nombre,
+      nombre
+    });
+
     await nuevoProducto.save();
     res.status(201).json(responseFormat(true, 'Producto creado exitosamente', nuevoProducto));
   } catch (error) {
@@ -471,7 +495,7 @@ app.get('/api/meal_preps', async (req, res, next) => {
   }
 });
 
-// 11. Notificaciones (Nuevo Módulo Inteligente)
+// 11. Notificaciones (Módulo Inteligente)
 app.post('/api/notificaciones', async (req, res, next) => {
   try {
     const nuevaNoti = new Notificacion(req.body);
@@ -484,7 +508,6 @@ app.post('/api/notificaciones', async (req, res, next) => {
 
 app.get('/api/notificaciones', async (req, res, next) => {
   try {
-    // Filtrar notificaciones específicamente por usuario (?user_nombre=john)
     const filtro = req.query.user_nombre ? { user_nombre: req.query.user_nombre } : {};
     const notificaciones = await Notificacion.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Notificaciones obtenidas exitosamente', notificaciones));
