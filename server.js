@@ -476,9 +476,33 @@ app.delete('/api/ingredientes/:id', async (req, res, next) => {
 });
 
 // 10. Meal Preps
+// 10. Meal Preps (Con validación estricta de existencia para Patrón Predictivo e Ingrediente)
 app.post('/api/meal_preps', async (req, res, next) => {
   try {
-    const nuevoMealPrep = new MealPrep(req.body);
+    const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
+
+    // 1. Validar que el patrón predictivo exista
+    const patronExiste = await PatronPredictivo.findById(patron_predictivo_id);
+    if (!patronExiste) {
+      const err = new Error(`El patrón predictivo '${patron_predictivo_id}' no se encuentra registrado. Debe crearlo primero.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // 2. Validar que el ingrediente base exista
+    const ingredienteExiste = await Ingrediente.findById(ingrediente_nombre);
+    if (!ingredienteExiste) {
+      const err = new Error(`El ingrediente '${ingrediente_nombre}' no se encuentra registrado. Debe crearlo primero.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const nuevoMealPrep = new MealPrep({
+      patron_predictivo_id,
+      ingrediente_nombre,
+      nombre_receta
+    });
+
     await nuevoMealPrep.save();
     res.status(201).json(responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep));
   } catch (error) {
