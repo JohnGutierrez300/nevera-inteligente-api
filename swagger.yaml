@@ -555,7 +555,7 @@ paths:
       tags:
         - Planes de Comida (Meal Preps)
       operationId: createMealPrep
-      summary: Crear plan de comidas vinculado
+      summary: Crear plan de comidas vinculado (Un solo plan por patrón predictivo)
       requestBody:
         required: true
         content:
@@ -570,7 +570,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "400":
-          description: Datos no válidos
+          description: Datos no válidos o ID de patrón duplicado
         "500":
           description: Error del servidor
     get:
@@ -585,6 +585,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "500":
+          description: Error del servidor
+
+  /api/meal_preps/{id}:
+    delete:
+      tags:
+        - Planes de Comida (Meal Preps)
+      operationId: deleteMealPrep
+      summary: Eliminar un plan de comidas por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Plan de comidas eliminado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        "404":
+          description: Plan de comidas no encontrado
         "500":
           description: Error del servidor
 

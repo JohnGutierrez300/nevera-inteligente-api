@@ -420,7 +420,7 @@ app.get('/api/historial_inventario', async (req, res, next) => {
   }
 });
 
-// 8. Patrones Predictivos
+// 8. Patrones Predictivos (Corregido para proteger la información personal del usuario)
 app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const nuevoPatron = new PatronPredictivo(req.body);
@@ -434,7 +434,8 @@ app.post('/api/patrones_predictivos', async (req, res, next) => {
 app.get('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const filtro = req.query.user_nombre ? { user_nombre: req.query.user_nombre } : {};
-    const patrones = await PatronPredictivo.find(filtro).populate({ path: 'user_nombre', model: 'Usuario' });
+    // Se elimina el populate de usuarios para evitar exponer contraseñas y correos
+    const patrones = await PatronPredictivo.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Patrones predictivos obtenidos', patrones));
   } catch (error) {
     next(error);
@@ -475,8 +476,16 @@ app.delete('/api/ingredientes/:id', async (req, res, next) => {
   }
 });
 
-// 10. Meal Preps
-// 10. Meal Preps (Con validación estricta de existencia para Patrón Predictivo e Ingrediente)
+// 10. Meal Preps (Con unicidad estricta en patron_predictivo_id y método DELETE)
+const mealPrepSchema = new mongoose.Schema({
+  patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true, unique: true },
+  ingrediente_nombre: { type: String, ref: 'Ingrediente', required: true },
+  nombre_receta: { type: String, required: true }
+}, { collection: 'meal_preps', versionKey: false });
+
+// Sobrescribimos el modelo MealPrep para aplicar el esquema actualizado con unique: true
+const MealPrep = mongoose.models.MealPrep || mongoose.model('MealPrep', mealPrepSchema);
+
 app.post('/api/meal_preps', async (req, res, next) => {
   try {
     const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
@@ -506,6 +515,11 @@ app.post('/api/meal_preps', async (req, res, next) => {
     await nuevoMealPrep.save();
     res.status(201).json(responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep));
   } catch (error) {
+    // Capturar error duplicado de MongoDB (E11000) por si intentan repetir el patron_predictivo_id
+    if (error.code === 11000) {
+      error.message = 'Ya existe un plan de comidas asociado a este ID de patrón predictivo. No se permiten duplicados.';
+      error.statusCode = 400;
+    }
     next(error);
   }
 });
@@ -514,6 +528,20 @@ app.get('/api/meal_preps', async (req, res, next) => {
   try {
     const mealPreps = await MealPrep.find().lean();
     res.status(200).json(responseFormat(true, 'Lista de planes de comida obtenida', mealPreps));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete('/api/meal_preps/:id', async (req, res, next) => {
+  try {
+    const mealPrepEliminado = await MealPrep.findByIdAndDelete(req.params.id);
+    if (!mealPrepEliminado) {
+      const err = new Error('Plan de comidas no encontrado');
+      err.statusCode = 404;
+      throw err;
+    }
+    res.status(200).json(responseFormat(true, 'Plan de comidas eliminado exitosamente', mealPrepEliminado));
   } catch (error) {
     next(error);
   }
