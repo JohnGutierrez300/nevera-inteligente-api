@@ -90,11 +90,14 @@ const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
   _id: { type: String, required: true }
 }, { collection: 'ingredientes', _id: false, versionKey: false }));
 
-const MealPrep = mongoose.model('MealPrep', new mongoose.Schema({
-  patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true },
+// Modelo Meal Prep con restricción de unicidad en patron_predictivo_id
+const mealPrepSchema = new mongoose.Schema({
+  patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true, unique: true },
   ingrediente_nombre: { type: String, ref: 'Ingrediente', required: true },
   nombre_receta: { type: String, required: true }
-}, { collection: 'meal_preps', versionKey: false }));
+}, { collection: 'meal_preps', versionKey: false });
+
+const MealPrep = mongoose.models.MealPrep || mongoose.model('MealPrep', mealPrepSchema);
 
 // Nuevo Modelo de Notificaciones
 const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
@@ -114,7 +117,6 @@ app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
     
-    // Validación previa para prevenir duplicados por nombre o email
     const usuarioExistente = await Usuario.findOne({ $or: [{ _id: id || nombre }, { nombre }, { email }] });
     if (usuarioExistente) {
       const err = new Error('El nombre de usuario, ID o correo electrónico ya se encuentran registrados.');
@@ -237,7 +239,6 @@ app.post('/api/productos', async (req, res, next) => {
   try {
     const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
 
-    // Validar si la marca existe previamente
     const marcaExiste = await Marca.findById(marca_nombre);
     if (!marcaExiste) {
       const err = new Error(`La marca '${marca_nombre}' no se encuentra registrada. Debe crearla primero.`);
@@ -245,7 +246,6 @@ app.post('/api/productos', async (req, res, next) => {
       throw err;
     }
 
-    // Validar si la categoría existe previamente
     const categoriaExiste = await Categoria.findById(categoria_nombre);
     if (!categoriaExiste) {
       const err = new Error(`La categoría '${categoria_nombre}' no se encuentra registrada. Debe crearla primero.`);
@@ -320,7 +320,6 @@ app.post('/api/inventario', async (req, res, next) => {
 
 app.get('/api/inventario', async (req, res, next) => {
   try {
-    // Permite filtrar por usuario y nevera para mantener el aislamiento completo
     const filtro = {};
     if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
     if (req.query.nevera_id) filtro.nevera_id = req.query.nevera_id;
@@ -420,7 +419,7 @@ app.get('/api/historial_inventario', async (req, res, next) => {
   }
 });
 
-// 8. Patrones Predictivos (Corregido para proteger la información personal del usuario)
+// 8. Patrones Predictivos (Seguro: sin exponer datos sensibles del usuario)
 app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const nuevoPatron = new PatronPredictivo(req.body);
@@ -434,7 +433,6 @@ app.post('/api/patrones_predictivos', async (req, res, next) => {
 app.get('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const filtro = req.query.user_nombre ? { user_nombre: req.query.user_nombre } : {};
-    // Se elimina el populate de usuarios para evitar exponer contraseñas y correos
     const patrones = await PatronPredictivo.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Patrones predictivos obtenidos', patrones));
   } catch (error) {
@@ -476,21 +474,11 @@ app.delete('/api/ingredientes/:id', async (req, res, next) => {
   }
 });
 
-// 10. Meal Preps (Con unicidad estricta en patron_predictivo_id y método DELETE)
-const mealPrepSchema = new mongoose.Schema({
-  patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true, unique: true },
-  ingrediente_nombre: { type: String, ref: 'Ingrediente', required: true },
-  nombre_receta: { type: String, required: true }
-}, { collection: 'meal_preps', versionKey: false });
-
-// Sobrescribimos el modelo MealPrep para aplicar el esquema actualizado con unique: true
-const MealPrep = mongoose.models.MealPrep || mongoose.model('MealPrep', mealPrepSchema);
-
+// 10. Meal Preps (Con validación estricta, unicidad y método DELETE)
 app.post('/api/meal_preps', async (req, res, next) => {
   try {
     const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
 
-    // 1. Validar que el patrón predictivo exista
     const patronExiste = await PatronPredictivo.findById(patron_predictivo_id);
     if (!patronExiste) {
       const err = new Error(`El patrón predictivo '${patron_predictivo_id}' no se encuentra registrado. Debe crearlo primero.`);
@@ -498,7 +486,6 @@ app.post('/api/meal_preps', async (req, res, next) => {
       throw err;
     }
 
-    // 2. Validar que el ingrediente base exista
     const ingredienteExiste = await Ingrediente.findById(ingrediente_nombre);
     if (!ingredienteExiste) {
       const err = new Error(`El ingrediente '${ingrediente_nombre}' no se encuentra registrado. Debe crearlo primero.`);
@@ -515,7 +502,6 @@ app.post('/api/meal_preps', async (req, res, next) => {
     await nuevoMealPrep.save();
     res.status(201).json(responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep));
   } catch (error) {
-    // Capturar error duplicado de MongoDB (E11000) por si intentan repetir el patron_predictivo_id
     if (error.code === 11000) {
       error.message = 'Ya existe un plan de comidas asociado a este ID de patrón predictivo. No se permiten duplicados.';
       error.statusCode = 400;
