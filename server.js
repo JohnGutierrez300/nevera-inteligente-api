@@ -533,10 +533,26 @@ app.delete('/api/meal_preps/:id', async (req, res, next) => {
   }
 });
 
-// 11. Notificaciones (Módulo Inteligente)
+// 11. Notificaciones (Con validación estricta de existencia del usuario)
 app.post('/api/notificaciones', async (req, res, next) => {
   try {
-    const nuevaNoti = new Notificacion(req.body);
+    const { user_nombre, mensaje, tipo, leida } = req.body;
+
+    // Validar que el usuario exista antes de crear la notificación
+    const usuarioExiste = await Usuario.findById(user_nombre);
+    if (!usuarioExiste) {
+      const err = new Error(`El usuario '${user_nombre}' no se encuentra registrado. Debe crearlo primero.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const nuevaNoti = new Notificacion({
+      user_nombre,
+      mensaje,
+      tipo,
+      leida
+    });
+
     await nuevaNoti.save();
     res.status(201).json(responseFormat(true, 'Notificación creada exitosamente', nuevaNoti));
   } catch (error) {
