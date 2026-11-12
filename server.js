@@ -99,7 +99,7 @@ const mealPrepSchema = new mongoose.Schema({
 
 const MealPrep = mongoose.models.MealPrep || mongoose.model('MealPrep', mealPrepSchema);
 
-// Nuevo Modelo de Notificaciones
+// Modelo de Notificaciones
 const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
   mensaje: { type: String, required: true },
@@ -299,10 +299,45 @@ app.delete('/api/productos/:id', async (req, res, next) => {
   }
 });
 
-// 6. Inventario (Filtrado estricto por usuario y nevera_id)
+// 6. Inventario (Con validación estricta de Usuario, Producto y Unidad de Medida)
 app.post('/api/inventario', async (req, res, next) => {
   try {
-    const nuevoItem = new Inventario(req.body);
+    const { user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado } = req.body;
+
+    // 1. Validar que el usuario exista
+    const usuarioExiste = await Usuario.findById(user_nombre);
+    if (!usuarioExiste) {
+      const err = new Error(`El usuario '${user_nombre}' no se encuentra registrado. Debe crearlo primero.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // 2. Validar que el producto exista
+    const productoExiste = await Producto.findById(producto_id);
+    if (!productoExiste) {
+      const err = new Error(`El producto '${producto_id}' no se encuentra registrado. Debe crearlo primero.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // 3. Validar que la unidad de medida exista
+    const unidadExiste = await UnidadMedida.findById(unidad_medida_nombre);
+    if (!unidadExiste) {
+      const err = new Error(`La unidad de medida '${unidad_medida_nombre}' no se encuentra registrada. Debe crearla primero.`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const nuevoItem = new Inventario({
+      user_nombre,
+      nevera_id,
+      producto_id,
+      unidad_medida_nombre,
+      cantidad,
+      fecha_vencimiento,
+      estado
+    });
+
     await nuevoItem.save();
 
     await HistorialInventario.create({
@@ -419,7 +454,7 @@ app.get('/api/historial_inventario', async (req, res, next) => {
   }
 });
 
-// 8. Patrones Predictivos (Seguro: sin exponer datos sensibles del usuario)
+// 8. Patrones Predictivos
 app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const nuevoPatron = new PatronPredictivo(req.body);
@@ -474,7 +509,7 @@ app.delete('/api/ingredientes/:id', async (req, res, next) => {
   }
 });
 
-// 10. Meal Preps (Con validación estricta, unicidad y método DELETE)
+// 10. Meal Preps
 app.post('/api/meal_preps', async (req, res, next) => {
   try {
     const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
@@ -533,12 +568,11 @@ app.delete('/api/meal_preps/:id', async (req, res, next) => {
   }
 });
 
-// 11. Notificaciones (Con validación estricta de existencia del usuario)
+// 11. Notificaciones
 app.post('/api/notificaciones', async (req, res, next) => {
   try {
     const { user_nombre, mensaje, tipo, leida } = req.body;
 
-    // Validar que el usuario exista antes de crear la notificación
     const usuarioExiste = await Usuario.findById(user_nombre);
     if (!usuarioExiste) {
       const err = new Error(`El usuario '${user_nombre}' no se encuentra registrado. Debe crearlo primero.`);
