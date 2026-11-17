@@ -167,13 +167,22 @@ app.get('/api/usuarios', async (req, res, next) => {
 
 app.delete('/api/usuarios/:id', async (req, res, next) => {
   try {
-    const usuarioEliminado = await Usuario.findByIdAndDelete(req.params.id);
+    const usuarioId = req.params.id;
+
+    // 1. Verificar que el usuario exista
+    const usuarioEliminado = await Usuario.findByIdAndDelete(usuarioId);
     if (!usuarioEliminado) {
       const err = new Error('Usuario no encontrado');
       err.statusCode = 404;
       throw err;
     }
-    res.status(200).json(responseFormat(true, 'Usuario eliminado exitosamente', usuarioEliminado));
+
+    // 2. Eliminación en cascada (Limpiar todo lo asociado al usuario)
+    await Inventario.deleteMany({ user_nombre: usuarioId });
+    await PatronPredictivo.deleteMany({ user_nombre: usuarioId });
+    await Notificacion.deleteMany({ user_nombre: usuarioId });
+
+    res.status(200).json(responseFormat(true, 'Usuario y todos sus datos asociados eliminados exitosamente', usuarioEliminado));
   } catch (error) {
     next(error);
   }
