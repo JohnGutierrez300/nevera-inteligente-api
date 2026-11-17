@@ -62,7 +62,7 @@ const Producto = mongoose.model('Producto', new mongoose.Schema({
 }, { collection: 'productos', _id: false, versionKey: false }));
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
-  user_nombre: { type: String, ref: 'Usuario', required: true }, // Aislamiento por usuario
+  user_nombre: { type: String, ref: 'Usuario', required: true },
   nevera_id: { type: String, required: true, default: 'NEVERA-01' },
   producto_id: { type: String, ref: 'Producto', required: true },
   unidad_medida_nombre: { type: String, ref: 'UnidadMedida', required: true },
@@ -90,7 +90,6 @@ const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
   _id: { type: String, required: true }
 }, { collection: 'ingredientes', _id: false, versionKey: false }));
 
-// Modelo Meal Prep con restricción de unicidad en patron_predictivo_id
 const mealPrepSchema = new mongoose.Schema({
   patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true, unique: true },
   ingrediente_nombre: { type: String, ref: 'Ingrediente', required: true },
@@ -99,7 +98,6 @@ const mealPrepSchema = new mongoose.Schema({
 
 const MealPrep = mongoose.models.MealPrep || mongoose.model('MealPrep', mealPrepSchema);
 
-// Modelo de Notificaciones
 const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
   mensaje: { type: String, required: true },
@@ -112,24 +110,17 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
 // RUTAS DE LA API RESTful
 // ==========================================
 
-// 1. Usuarios (Sin duplicados y validación estricta)
+// 1. Usuarios
 app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
-    
     const usuarioExistente = await Usuario.findOne({ $or: [{ _id: id || nombre }, { nombre }, { email }] });
     if (usuarioExistente) {
       const err = new Error('El nombre de usuario, ID o correo electrónico ya se encuentran registrados.');
       err.statusCode = 400;
       throw err;
     }
-
-    const nuevoUsuario = new Usuario({ 
-      _id: id || nombre, 
-      nombre, 
-      email, 
-      password_hash 
-    });
+    const nuevoUsuario = new Usuario({ _id: id || nombre, nombre, email, password_hash });
     await nuevoUsuario.save();
     res.status(201).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
   } catch (error) {
@@ -234,32 +225,23 @@ app.get('/api/unidades_medida', async (req, res, next) => {
   }
 });
 
-// 5. Productos (Con validación estricta de existencia para Marca y Categoría)
+// 5. Productos
 app.post('/api/productos', async (req, res, next) => {
   try {
     const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
-
     const marcaExiste = await Marca.findById(marca_nombre);
     if (!marcaExiste) {
       const err = new Error(`La marca '${marca_nombre}' no se encuentra registrada. Debe crearla primero.`);
       err.statusCode = 400;
       throw err;
     }
-
     const categoriaExiste = await Categoria.findById(categoria_nombre);
     if (!categoriaExiste) {
       const err = new Error(`La categoría '${categoria_nombre}' no se encuentra registrada. Debe crearla primero.`);
       err.statusCode = 400;
       throw err;
     }
-
-    const nuevoProducto = new Producto({
-      _id,
-      marca_nombre,
-      categoria_nombre,
-      nombre
-    });
-
+    const nuevoProducto = new Producto({ _id, marca_nombre, categoria_nombre, nombre });
     await nuevoProducto.save();
     res.status(201).json(responseFormat(true, 'Producto creado exitosamente', nuevoProducto));
   } catch (error) {
@@ -299,12 +281,11 @@ app.delete('/api/productos/:id', async (req, res, next) => {
   }
 });
 
-// 6. Inventario (Con validación estricta de Usuario, Producto y Unidad de Medida)
+// 6. Inventario (Seguro: sin exponer password ni email del usuario en el GET)
 app.post('/api/inventario', async (req, res, next) => {
   try {
     const { user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado } = req.body;
 
-    // 1. Validar que el usuario exista
     const usuarioExiste = await Usuario.findById(user_nombre);
     if (!usuarioExiste) {
       const err = new Error(`El usuario '${user_nombre}' no se encuentra registrado. Debe crearlo primero.`);
@@ -312,7 +293,6 @@ app.post('/api/inventario', async (req, res, next) => {
       throw err;
     }
 
-    // 2. Validar que el producto exista
     const productoExiste = await Producto.findById(producto_id);
     if (!productoExiste) {
       const err = new Error(`El producto '${producto_id}' no se encuentra registrado. Debe crearlo primero.`);
@@ -320,7 +300,6 @@ app.post('/api/inventario', async (req, res, next) => {
       throw err;
     }
 
-    // 3. Validar que la unidad de medida exista
     const unidadExiste = await UnidadMedida.findById(unidad_medida_nombre);
     if (!unidadExiste) {
       const err = new Error(`La unidad de medida '${unidad_medida_nombre}' no se encuentra registrada. Debe crearla primero.`);
@@ -328,16 +307,7 @@ app.post('/api/inventario', async (req, res, next) => {
       throw err;
     }
 
-    const nuevoItem = new Inventario({
-      user_nombre,
-      nevera_id,
-      producto_id,
-      unidad_medida_nombre,
-      cantidad,
-      fecha_vencimiento,
-      estado
-    });
-
+    const nuevoItem = new Inventario({ user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado });
     await nuevoItem.save();
 
     await HistorialInventario.create({
@@ -356,13 +326,22 @@ app.post('/api/inventario', async (req, res, next) => {
 app.get('/api/inventario', async (req, res, next) => {
   try {
     const filtro = {};
-    if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
+    if (req.query.user_nombre) {
+      const usuarioExiste = await Usuario.findById(req.query.user_nombre);
+      if (!usuarioExiste) {
+        const err = new Error(`El usuario '${req.query.user_nombre}' no existe en la base de datos.`);
+        err.statusCode = 404;
+        throw err;
+      }
+      filtro.user_nombre = req.query.user_nombre;
+    }
     if (req.query.nevera_id) filtro.nevera_id = req.query.nevera_id;
 
     const inventarios = await Inventario.find(filtro).lean();
 
     const inventariosCompletos = await Promise.all(inventarios.map(async (item) => {
-      const usuario = await Usuario.findById(item.user_nombre).lean();
+      // Se proyecta únicamente el _id y el nombre del usuario (sin credenciales ni contraseñas)
+      const usuario = await Usuario.findById(item.user_nombre).select('_id nombre').lean();
       let producto = await Producto.findById(item.producto_id).lean();
       if (producto) {
         const marca = await Marca.findById(producto.marca_nombre).lean();
@@ -374,7 +353,7 @@ app.get('/api/inventario', async (req, res, next) => {
 
       return {
         ...item,
-        user_nombre: usuario || item.user_nombre,
+        user_nombre: usuario || { _id: item.user_nombre, nombre: item.user_nombre },
         producto_id: producto || item.producto_id,
         unidad_medida_nombre: unidadMedida || item.unidad_medida_nombre
       };
@@ -454,7 +433,7 @@ app.get('/api/historial_inventario', async (req, res, next) => {
   }
 });
 
-// 8. Patrones Predictivos
+// 8. Patrones Predictivos (Con validación estricta si se filtra por usuario inexistente)
 app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const nuevoPatron = new PatronPredictivo(req.body);
@@ -467,7 +446,16 @@ app.post('/api/patrones_predictivos', async (req, res, next) => {
 
 app.get('/api/patrones_predictivos', async (req, res, next) => {
   try {
-    const filtro = req.query.user_nombre ? { user_nombre: req.query.user_nombre } : {};
+    const filtro = {};
+    if (req.query.user_nombre) {
+      const usuarioExiste = await Usuario.findById(req.query.user_nombre);
+      if (!usuarioExiste) {
+        const err = new Error(`El usuario '${req.query.user_nombre}' no existe en la base de datos.`);
+        err.statusCode = 404;
+        throw err;
+      }
+      filtro.user_nombre = req.query.user_nombre;
+    }
     const patrones = await PatronPredictivo.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Patrones predictivos obtenidos', patrones));
   } catch (error) {
@@ -513,27 +501,19 @@ app.delete('/api/ingredientes/:id', async (req, res, next) => {
 app.post('/api/meal_preps', async (req, res, next) => {
   try {
     const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
-
     const patronExiste = await PatronPredictivo.findById(patron_predictivo_id);
     if (!patronExiste) {
       const err = new Error(`El patrón predictivo '${patron_predictivo_id}' no se encuentra registrado. Debe crearlo primero.`);
       err.statusCode = 400;
       throw err;
     }
-
     const ingredienteExiste = await Ingrediente.findById(ingrediente_nombre);
     if (!ingredienteExiste) {
       const err = new Error(`El ingrediente '${ingrediente_nombre}' no se encuentra registrado. Debe crearlo primero.`);
       err.statusCode = 400;
       throw err;
     }
-
-    const nuevoMealPrep = new MealPrep({
-      patron_predictivo_id,
-      ingrediente_nombre,
-      nombre_receta
-    });
-
+    const nuevoMealPrep = new MealPrep({ patron_predictivo_id, ingrediente_nombre, nombre_receta });
     await nuevoMealPrep.save();
     res.status(201).json(responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep));
   } catch (error) {
@@ -568,25 +548,17 @@ app.delete('/api/meal_preps/:id', async (req, res, next) => {
   }
 });
 
-// 11. Notificaciones
+// 11. Notificaciones (Con validación estricta de usuario existente en el GET por query param)
 app.post('/api/notificaciones', async (req, res, next) => {
   try {
     const { user_nombre, mensaje, tipo, leida } = req.body;
-
     const usuarioExiste = await Usuario.findById(user_nombre);
     if (!usuarioExiste) {
       const err = new Error(`El usuario '${user_nombre}' no se encuentra registrado. Debe crearlo primero.`);
       err.statusCode = 400;
       throw err;
     }
-
-    const nuevaNoti = new Notificacion({
-      user_nombre,
-      mensaje,
-      tipo,
-      leida
-    });
-
+    const nuevaNoti = new Notificacion({ user_nombre, mensaje, tipo, leida });
     await nuevaNoti.save();
     res.status(201).json(responseFormat(true, 'Notificación creada exitosamente', nuevaNoti));
   } catch (error) {
@@ -596,7 +568,16 @@ app.post('/api/notificaciones', async (req, res, next) => {
 
 app.get('/api/notificaciones', async (req, res, next) => {
   try {
-    const filtro = req.query.user_nombre ? { user_nombre: req.query.user_nombre } : {};
+    const filtro = {};
+    if (req.query.user_nombre) {
+      const usuarioExiste = await Usuario.findById(req.query.user_nombre);
+      if (!usuarioExiste) {
+        const err = new Error(`El usuario '${req.query.user_nombre}' no existe en la base de datos.`);
+        err.statusCode = 404;
+        throw err;
+      }
+      filtro.user_nombre = req.query.user_nombre;
+    }
     const notificaciones = await Notificacion.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Notificaciones obtenidas exitosamente', notificaciones));
   } catch (error) {
