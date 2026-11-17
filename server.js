@@ -110,14 +110,28 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
 // RUTAS DE LA API RESTful
 // ==========================================
 
-// 1. Usuarios (Validación estricta de ID numérico)
+// 1. Usuarios (Con validación estricta de ID numérico y política robusta de contraseñas)
 app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
     const idAValidar = id || nombre;
 
+    // Validación estricta de ID numérico
     if (!/^\d+$/.test(idAValidar)) {
       const err = new Error('El ID del usuario debe ser un valor numérico (numeral), no se permiten letras ni texto.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Validación de seguridad de la contraseña:
+    // - Mínimo 12 caracteres
+    // - Al menos una letra minúscula
+    // - Al menos una letra mayúscula
+    // - Al menos un número
+    // - Al menos un carácter especial (@, #, $, %, !, etc.)
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,}$/;
+    if (!passwordRegex.test(password_hash)) {
+      const err = new Error('La contraseña no cumple con los requisitos de seguridad: debe tener al menos 12 caracteres, incluir letras mayúsculas, minúsculas, números y símbolos especiales.');
       err.statusCode = 400;
       throw err;
     }
