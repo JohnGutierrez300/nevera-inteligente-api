@@ -165,11 +165,12 @@ app.get('/api/usuarios', async (req, res, next) => {
   }
 });
 
+// 1. Usuarios (Con eliminación en cascada completa y limpia de huérfanos)
 app.delete('/api/usuarios/:id', async (req, res, next) => {
   try {
     const usuarioId = req.params.id;
 
-    // 1. Verificar que el usuario exista
+    // 1. Verificar que el usuario exista y eliminarlo
     const usuarioEliminado = await Usuario.findByIdAndDelete(usuarioId);
     if (!usuarioEliminado) {
       const err = new Error('Usuario no encontrado');
@@ -177,12 +178,17 @@ app.delete('/api/usuarios/:id', async (req, res, next) => {
       throw err;
     }
 
-    // 2. Eliminación en cascada (Limpiar todo lo asociado al usuario)
-    await Inventario.deleteMany({ user_nombre: usuarioId });
+    // 2. Encontrar los patrones predictivos del usuario
+    const patronesUsuario = await PatronPredictivo.find({ user_nombre: usuarioId }).lean();
+    const patronIds = patronesUsuario.map(p => p._id);
+
+    // 3. Eliminación en cascada en cadena (Cero registros huérfanos en toda la BD)
+    await MealPrep.deleteMany({ patron_predictivo_id: { $in: patronIds } });
     await PatronPredictivo.deleteMany({ user_nombre: usuarioId });
+    await Inventario.deleteMany({ user_nombre: usuarioId });
     await Notificacion.deleteMany({ user_nombre: usuarioId });
 
-    res.status(200).json(responseFormat(true, 'Usuario y todos sus datos asociados eliminados exitosamente', usuarioEliminado));
+    res.status(200).json(responseFormat(true, 'Usuario y todos sus datos asociados eliminados exitosamente en cascada', usuarioEliminado));
   } catch (error) {
     next(error);
   }
