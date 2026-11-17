@@ -110,17 +110,31 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
 // RUTAS DE LA API RESTful
 // ==========================================
 
-// 1. Usuarios
+// 1. Usuarios (Validación estricta de ID numérico)
 app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
-    const usuarioExistente = await Usuario.findOne({ $or: [{ _id: id || nombre }, { nombre }, { email }] });
-    if (usuarioExistente) {
-      const err = new Error('El nombre de usuario, ID o correo electrónico ya se encuentran registrados.');
+    const idAValidar = id || nombre;
+
+    if (!/^\d+$/.test(idAValidar)) {
+      const err = new Error('El ID del usuario debe ser un valor numérico (numeral), no se permiten letras ni texto.');
       err.statusCode = 400;
       throw err;
     }
-    const nuevoUsuario = new Usuario({ _id: id || nombre, nombre, email, password_hash });
+
+    const usuarioExistente = await Usuario.findOne({ $or: [{ _id: idAValidar }, { nombre }, { email }] });
+    if (usuarioExistente) {
+      const err = new Error('El ID, nombre de usuario o correo electrónico ya se encuentran registrados.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const nuevoUsuario = new Usuario({ 
+      _id: idAValidar, 
+      nombre, 
+      email, 
+      password_hash 
+    });
     await nuevoUsuario.save();
     res.status(201).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
   } catch (error) {
@@ -281,7 +295,7 @@ app.delete('/api/productos/:id', async (req, res, next) => {
   }
 });
 
-// 6. Inventario (Con validación estricta de existencia para Usuario, Producto, Unidad y Nevera en GET)
+// 6. Inventario
 app.post('/api/inventario', async (req, res, next) => {
   try {
     const { user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado } = req.body;
