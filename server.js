@@ -281,7 +281,7 @@ app.delete('/api/productos/:id', async (req, res, next) => {
   }
 });
 
-// 6. Inventario (Seguro: sin exponer password ni email del usuario en el GET)
+// 6. Inventario (Con validación estricta de existencia para Usuario, Producto, Unidad y Nevera en GET)
 app.post('/api/inventario', async (req, res, next) => {
   try {
     const { user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado } = req.body;
@@ -335,12 +335,19 @@ app.get('/api/inventario', async (req, res, next) => {
       }
       filtro.user_nombre = req.query.user_nombre;
     }
-    if (req.query.nevera_id) filtro.nevera_id = req.query.nevera_id;
+    if (req.query.nevera_id) {
+      const neveraExiste = await Inventario.findOne({ nevera_id: req.query.nevera_id });
+      if (!neveraExiste) {
+        const err = new Error(`La nevera '${req.query.nevera_id}' no existe o no tiene registros en la base de datos.`);
+        err.statusCode = 404;
+        throw err;
+      }
+      filtro.nevera_id = req.query.nevera_id;
+    }
 
     const inventarios = await Inventario.find(filtro).lean();
 
     const inventariosCompletos = await Promise.all(inventarios.map(async (item) => {
-      // Se proyecta únicamente el _id y el nombre del usuario (sin credenciales ni contraseñas)
       const usuario = await Usuario.findById(item.user_nombre).select('_id nombre').lean();
       let producto = await Producto.findById(item.producto_id).lean();
       if (producto) {
@@ -433,7 +440,7 @@ app.get('/api/historial_inventario', async (req, res, next) => {
   }
 });
 
-// 8. Patrones Predictivos (Con validación estricta si se filtra por usuario inexistente)
+// 8. Patrones Predictivos
 app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const nuevoPatron = new PatronPredictivo(req.body);
@@ -548,7 +555,7 @@ app.delete('/api/meal_preps/:id', async (req, res, next) => {
   }
 });
 
-// 11. Notificaciones (Con validación estricta de usuario existente en el GET por query param)
+// 11. Notificaciones
 app.post('/api/notificaciones', async (req, res, next) => {
   try {
     const { user_nombre, mensaje, tipo, leida } = req.body;
