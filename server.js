@@ -110,37 +110,24 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
 // RUTAS DE LA API RESTful
 // ==========================================
 
-// 1. Usuarios (Con validación estricta de ID numérico y política robusta de contraseñas)
+// 1. Usuarios
 app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
     const idAValidar = id || nombre;
 
-    // Validación estricta de ID numérico
     if (!/^\d+$/.test(idAValidar)) {
-      const err = new Error('El ID del usuario debe ser un valor numérico (numeral), no se permiten letras ni texto.');
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'El ID del usuario debe ser un valor numérico (numeral), no se permiten letras ni texto.', null));
     }
 
-    // Validación de seguridad de la contraseña:
-    // - Mínimo 12 caracteres
-    // - Al menos una letra minúscula
-    // - Al menos una letra mayúscula
-    // - Al menos un número
-    // - Al menos un carácter especial (@, #, $, %, !, etc.)
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,}$/;
     if (!passwordRegex.test(password_hash)) {
-      const err = new Error('La contraseña no cumple con los requisitos de seguridad: debe tener al menos 12 caracteres, incluir letras mayúsculas, minúsculas, números y símbolos especiales.');
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'La contraseña no cumple con los requisitos de seguridad: mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos especiales.', null));
     }
 
     const usuarioExistente = await Usuario.findOne({ $or: [{ _id: idAValidar }, { nombre }, { email }] });
     if (usuarioExistente) {
-      const err = new Error('El ID, nombre de usuario o correo electrónico ya se encuentran registrados.');
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'El ID, nombre de usuario o correo electrónico ya se encuentran registrados.', null));
     }
 
     const nuevoUsuario = new Usuario({ 
@@ -150,7 +137,7 @@ app.post('/api/usuarios', async (req, res, next) => {
       password_hash 
     });
     await nuevoUsuario.save();
-    res.status(201).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
+    res.status(200).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
   } catch (error) {
     next(error);
   }
@@ -165,24 +152,17 @@ app.get('/api/usuarios', async (req, res, next) => {
   }
 });
 
-// 1. Usuarios (Eliminación en cascada de todo lo conectado, conservando intacto el historial)
 app.delete('/api/usuarios/:id', async (req, res, next) => {
   try {
     const usuarioId = req.params.id;
-
-    // 1. Verificar que el usuario exista y eliminarlo
     const usuarioEliminado = await Usuario.findByIdAndDelete(usuarioId);
     if (!usuarioEliminado) {
-      const err = new Error('Usuario no encontrado');
-      err.statusCode = 404;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'Usuario no encontrado en la base de datos', null));
     }
 
-    // 2. Buscar los patrones predictivos del usuario para limpiar sus meal preps asociados
     const patronesUsuario = await PatronPredictivo.find({ user_nombre: usuarioId }).lean();
     const patronIds = patronesUsuario.map(p => p._id);
 
-    // 3. EJECUTAR EL BARRIDO (Se borra todo lo conectado, pero el historial de inventario NO se toca)
     await MealPrep.deleteMany({ patron_predictivo_id: { $in: patronIds } });
     await PatronPredictivo.deleteMany({ user_nombre: usuarioId });
     await Inventario.deleteMany({ user_nombre: usuarioId });
@@ -199,7 +179,7 @@ app.post('/api/categorias', async (req, res, next) => {
   try {
     const nuevaCategoria = new Categoria(req.body);
     await nuevaCategoria.save();
-    res.status(201).json(responseFormat(true, 'Categoría creada exitosamente', nuevaCategoria));
+    res.status(200).json(responseFormat(true, 'Categoría creada exitosamente', nuevaCategoria));
   } catch (error) {
     next(error);
   }
@@ -219,7 +199,7 @@ app.post('/api/marcas', async (req, res, next) => {
   try {
     const nuevaMarca = new Marca(req.body);
     await nuevaMarca.save();
-    res.status(201).json(responseFormat(true, 'Marca creada exitosamente', nuevaMarca));
+    res.status(200).json(responseFormat(true, 'Marca creada exitosamente', nuevaMarca));
   } catch (error) {
     next(error);
   }
@@ -238,9 +218,7 @@ app.delete('/api/marcas/:id', async (req, res, next) => {
   try {
     const marcaEliminada = await Marca.findByIdAndDelete(req.params.id);
     if (!marcaEliminada) {
-      const err = new Error('Marca no encontrada');
-      err.statusCode = 404;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'Marca no encontrada', null));
     }
     res.status(200).json(responseFormat(true, 'Marca eliminada exitosamente', marcaEliminada));
   } catch (error) {
@@ -253,7 +231,7 @@ app.post('/api/unidades_medida', async (req, res, next) => {
   try {
     const nuevaUnidad = new UnidadMedida(req.body);
     await nuevaUnidad.save();
-    res.status(201).json(responseFormat(true, 'Unidad de medida creada exitosamente', nuevaUnidad));
+    res.status(200).json(responseFormat(true, 'Unidad de medida creada exitosamente', nuevaUnidad));
   } catch (error) {
     next(error);
   }
@@ -274,19 +252,15 @@ app.post('/api/productos', async (req, res, next) => {
     const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
     const marcaExiste = await Marca.findById(marca_nombre);
     if (!marcaExiste) {
-      const err = new Error(`La marca '${marca_nombre}' no se encuentra registrada. Debe crearla primero.`);
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, `La marca '${marca_nombre}' no se encuentra registrada. Debe crearla primero.`, null));
     }
     const categoriaExiste = await Categoria.findById(categoria_nombre);
     if (!categoriaExiste) {
-      const err = new Error(`La categoría '${categoria_nombre}' no se encuentra registrada. Debe crearla primero.`);
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, `La categoría '${categoria_nombre}' no se encuentra registrada. Debe crearla primero.`, null));
     }
     const nuevoProducto = new Producto({ _id, marca_nombre, categoria_nombre, nombre });
     await nuevoProducto.save();
-    res.status(201).json(responseFormat(true, 'Producto creado exitosamente', nuevoProducto));
+    res.status(200).json(responseFormat(true, 'Producto creado exitosamente', nuevoProducto));
   } catch (error) {
     next(error);
   }
@@ -314,9 +288,7 @@ app.delete('/api/productos/:id', async (req, res, next) => {
   try {
     const productoEliminado = await Producto.findByIdAndDelete(req.params.id);
     if (!productoEliminado) {
-      const err = new Error('Producto no encontrado');
-      err.statusCode = 404;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'Producto no encontrado', null));
     }
     res.status(200).json(responseFormat(true, 'Producto eliminado exitosamente', productoEliminado));
   } catch (error) {
@@ -331,23 +303,17 @@ app.post('/api/inventario', async (req, res, next) => {
 
     const usuarioExiste = await Usuario.findById(user_nombre);
     if (!usuarioExiste) {
-      const err = new Error(`El usuario '${user_nombre}' no se encuentra registrado. Debe crearlo primero.`);
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, `El usuario '${user_nombre}' no se encuentra registrado. Debe crearlo primero.`, null));
     }
 
     const productoExiste = await Producto.findById(producto_id);
     if (!productoExiste) {
-      const err = new Error(`El producto '${producto_id}' no se encuentra registrado. Debe crearlo primero.`);
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, `El producto '${producto_id}' no se encuentra registrado. Debe crearlo primero.`, null));
     }
 
     const unidadExiste = await UnidadMedida.findById(unidad_medida_nombre);
     if (!unidadExiste) {
-      const err = new Error(`La unidad de medida '${unidad_medida_nombre}' no se encuentra registrada. Debe crearla primero.`);
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, `La unidad de medida '${unidad_medida_nombre}' no se encuentra registrada. Debe crearla primero.`, null));
     }
 
     const nuevoItem = new Inventario({ user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado });
@@ -360,7 +326,7 @@ app.post('/api/inventario', async (req, res, next) => {
       detalles: `Se agregó el alimento a la nevera ${nuevoItem.nevera_id} del usuario ${nuevoItem.user_nombre}`
     });
 
-    res.status(201).json(responseFormat(true, 'Alimento agregado al inventario', nuevoItem));
+    res.status(200).json(responseFormat(true, 'Alimento agregado al inventario', nuevoItem));
   } catch (error) {
     next(error);
   }
@@ -372,18 +338,14 @@ app.get('/api/inventario', async (req, res, next) => {
     if (req.query.user_nombre) {
       const usuarioExiste = await Usuario.findById(req.query.user_nombre);
       if (!usuarioExiste) {
-        const err = new Error(`El usuario '${req.query.user_nombre}' no existe en la base de datos.`);
-        err.statusCode = 404;
-        throw err;
+        return res.status(200).json(responseFormat(false, `El usuario '${req.query.user_nombre}' no existe en la base de datos.`, null));
       }
       filtro.user_nombre = req.query.user_nombre;
     }
     if (req.query.nevera_id) {
       const neveraExiste = await Inventario.findOne({ nevera_id: req.query.nevera_id });
       if (!neveraExiste) {
-        const err = new Error(`La nevera '${req.query.nevera_id}' no existe o no tiene registros en la base de datos.`);
-        err.statusCode = 404;
-        throw err;
+        return res.status(200).json(responseFormat(false, `La nevera '${req.query.nevera_id}' no existe o no tiene registros en la base de datos.`, null));
       }
       filtro.nevera_id = req.query.nevera_id;
     }
@@ -419,9 +381,7 @@ app.get('/api/inventario/:itemId', async (req, res, next) => {
   try {
     const item = await Inventario.findById(req.params.itemId).lean();
     if (!item) {
-      const err = new Error('Alimento no encontrado');
-      err.statusCode = 404;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'Alimento no encontrado', null));
     }
     res.status(200).json(responseFormat(true, 'Detalle del alimento obtenido', item));
   } catch (error) {
@@ -433,9 +393,7 @@ app.put('/api/inventario/:itemId', async (req, res, next) => {
   try {
     const itemActualizado = await Inventario.findByIdAndUpdate(req.params.itemId, req.body, { new: true });
     if (!itemActualizado) {
-      const err = new Error('Alimento no encontrado');
-      err.statusCode = 404;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'Alimento no encontrado', null));
     }
 
     await HistorialInventario.create({
@@ -455,9 +413,7 @@ app.delete('/api/inventario/:itemId', async (req, res, next) => {
   try {
     const itemEliminado = await Inventario.findByIdAndDelete(req.params.itemId);
     if (!itemEliminado) {
-      const err = new Error('Alimento no encontrado');
-      err.statusCode = 404;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'Alimento no encontrado', null));
     }
 
     await HistorialInventario.create({
@@ -488,7 +444,7 @@ app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const nuevoPatron = new PatronPredictivo(req.body);
     await nuevoPatron.save();
-    res.status(201).json(responseFormat(true, 'Patrón predictivo creado exitosamente', nuevoPatron));
+    res.status(200).json(responseFormat(true, 'Patrón predictivo creado exitosamente', nuevoPatron));
   } catch (error) {
     next(error);
   }
@@ -500,9 +456,7 @@ app.get('/api/patrones_predictivos', async (req, res, next) => {
     if (req.query.user_nombre) {
       const usuarioExiste = await Usuario.findById(req.query.user_nombre);
       if (!usuarioExiste) {
-        const err = new Error(`El usuario '${req.query.user_nombre}' no existe en la base de datos.`);
-        err.statusCode = 404;
-        throw err;
+        return res.status(200).json(responseFormat(false, `El usuario '${req.query.user_nombre}' no existe en la base de datos.`, null));
       }
       filtro.user_nombre = req.query.user_nombre;
     }
@@ -518,7 +472,7 @@ app.post('/api/ingredientes', async (req, res, next) => {
   try {
     const nuevoIngrediente = new Ingrediente(req.body);
     await nuevoIngrediente.save();
-    res.status(201).json(responseFormat(true, 'Ingrediente creado exitosamente', nuevoIngrediente));
+    res.status(200).json(responseFormat(true, 'Ingrediente creado exitosamente', nuevoIngrediente));
   } catch (error) {
     next(error);
   }
@@ -537,9 +491,7 @@ app.delete('/api/ingredientes/:id', async (req, res, next) => {
   try {
     const ingredienteEliminado = await Ingrediente.findByIdAndDelete(req.params.id);
     if (!ingredienteEliminado) {
-      const err = new Error('Ingrediente no encontrado');
-      err.statusCode = 404;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'Ingrediente no encontrado', null));
     }
     res.status(200).json(responseFormat(true, 'Ingrediente eliminado exitosamente', ingredienteEliminado));
   } catch (error) {
@@ -553,23 +505,18 @@ app.post('/api/meal_preps', async (req, res, next) => {
     const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
     const patronExiste = await PatronPredictivo.findById(patron_predictivo_id);
     if (!patronExiste) {
-      const err = new Error(`El patrón predictivo '${patron_predictivo_id}' no se encuentra registrado. Debe crearlo primero.`);
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, `El patrón predictivo '${patron_predictivo_id}' no se encuentra registrado. Debe crearlo primero.`, null));
     }
     const ingredienteExiste = await Ingrediente.findById(ingrediente_nombre);
     if (!ingredienteExiste) {
-      const err = new Error(`El ingrediente '${ingrediente_nombre}' no se encuentra registrado. Debe crearlo primero.`);
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, `El ingrediente '${ingrediente_nombre}' no se encuentra registrado. Debe crearlo primero.`, null));
     }
     const nuevoMealPrep = new MealPrep({ patron_predictivo_id, ingrediente_nombre, nombre_receta });
     await nuevoMealPrep.save();
-    res.status(201).json(responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep));
+    res.status(200).json(responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep));
   } catch (error) {
     if (error.code === 11000) {
-      error.message = 'Ya existe un plan de comidas asociado a este ID de patrón predictivo. No se permiten duplicados.';
-      error.statusCode = 400;
+      return res.status(200).json(responseFormat(false, 'Ya existe un plan de comidas asociado a este ID de patrón predictivo. No se permiten duplicados.', null));
     }
     next(error);
   }
@@ -588,9 +535,7 @@ app.delete('/api/meal_preps/:id', async (req, res, next) => {
   try {
     const mealPrepEliminado = await MealPrep.findByIdAndDelete(req.params.id);
     if (!mealPrepEliminado) {
-      const err = new Error('Plan de comidas no encontrado');
-      err.statusCode = 404;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'Plan de comidas no encontrado', null));
     }
     res.status(200).json(responseFormat(true, 'Plan de comidas eliminado exitosamente', mealPrepEliminado));
   } catch (error) {
@@ -604,13 +549,11 @@ app.post('/api/notificaciones', async (req, res, next) => {
     const { user_nombre, mensaje, tipo, leida } = req.body;
     const usuarioExiste = await Usuario.findById(user_nombre);
     if (!usuarioExiste) {
-      const err = new Error(`El usuario '${user_nombre}' no se encuentra registrado. Debe crearlo primero.`);
-      err.statusCode = 400;
-      throw err;
+      return res.status(200).json(responseFormat(false, `El usuario '${user_nombre}' no se encuentra registrado. Debe crearlo primero.`, null));
     }
     const nuevaNoti = new Notificacion({ user_nombre, mensaje, tipo, leida });
     await nuevaNoti.save();
-    res.status(201).json(responseFormat(true, 'Notificación creada exitosamente', nuevaNoti));
+    res.status(200).json(responseFormat(true, 'Notificación creada exitosamente', nuevaNoti));
   } catch (error) {
     next(error);
   }
@@ -622,9 +565,7 @@ app.get('/api/notificaciones', async (req, res, next) => {
     if (req.query.user_nombre) {
       const usuarioExiste = await Usuario.findById(req.query.user_nombre);
       if (!usuarioExiste) {
-        const err = new Error(`El usuario '${req.query.user_nombre}' no existe en la base de datos.`);
-        err.statusCode = 404;
-        throw err;
+        return res.status(200).json(responseFormat(false, `El usuario '${req.query.user_nombre}' no existe en la base de datos.`, null));
       }
       filtro.user_nombre = req.query.user_nombre;
     }
@@ -639,9 +580,7 @@ app.delete('/api/notificaciones/:id', async (req, res, next) => {
   try {
     const notiEliminada = await Notificacion.findByIdAndDelete(req.params.id);
     if (!notiEliminada) {
-      const err = new Error('Notificación no encontrada');
-      err.statusCode = 404;
-      throw err;
+      return res.status(200).json(responseFormat(false, 'Notificación no encontrada', null));
     }
     res.status(200).json(responseFormat(true, 'Notificación eliminada exitosamente', notiEliminada));
   } catch (error) {
@@ -654,10 +593,10 @@ app.delete('/api/notificaciones/:id', async (req, res, next) => {
 // ==========================================
 app.use((err, req, res, next) => {
   console.error("Error detectado:", err.message);
-  const statusCode = err.statusCode || 500;
   const message = err.message || 'Error interno del servidor';
 
-  res.status(statusCode).json({
+  // Forzar siempre 200 OK con success: false para que el servidor responda correctamente al cliente
+  res.status(200).json({
     success: false,
     message: message,
     data: null
