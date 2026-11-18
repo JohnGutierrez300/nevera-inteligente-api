@@ -520,21 +520,40 @@ app.post('/api/inventario', async (req, res, next) => {
   try {
     const { user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado } = req.body;
 
+    // Validaciones de existencia (fk)
     const usuarioExiste = await Usuario.findById(user_nombre);
     if (!usuarioExiste) {
-      return res.status(200).json(responseFormat(false, `El usuario '${user_nombre}' no se encuentra registrado. Debe crearlo primero.`, null));
+      return res.status(200).json(responseFormat(false, `El usuario '${user_nombre}' no se encuentra registrado.`, null));
     }
-
     const productoExiste = await Producto.findById(producto_id);
     if (!productoExiste) {
-      return res.status(200).json(responseFormat(false, `El producto '${producto_id}' no se encuentra registrado. Debe crearlo primero.`, null));
+      return res.status(200).json(responseFormat(false, `El producto '${producto_id}' no se encuentra registrado.`, null));
     }
 
-    const unidadExiste = await UnidadMedida.findById(unidad_medida_nombre);
-    if (!unidadExiste) {
-      return res.status(200).json(responseFormat(false, `La unidad de medida '${unidad_medida_nombre}' no se encuentra registrada. Debe crearla primero.`, null));
+    // REGLA INTELIGENTE: Buscar si ya existe el mismo producto activo en la nevera del usuario
+    let itemInventario = await Inventario.findOne({
+      user_nombre,
+      nevera_id,
+      producto_id,
+      estado: estado || 'EN_NEVERA'
+    });
+
+    if (itemInventario) {
+      // Si ya existe, actualizamos la cantidad sumando la nueva y actualizamos el historial
+      itemInventario.cantidad += Number(cantidad);
+      await itemInventario.save();
+
+      await HistorialInventario.create({
+        inventario_id: itemInventario._id,
+        snapshot_datos: itemInventario.toObject(),
+        accion: 'ACTUALIZADO',
+        detalles: `Se sumaron ${cantidad} unidades al producto existente en la nevera ${nevera_id}`
+      });
+
+      return res.status(200).json(responseFormat(true, 'El producto ya existía en la nevera; se actualizó la cantidad acumulada exitosamente.', itemInventario));
     }
 
+    // Si no existe, se crea el nuevo registro normalmente
     const nuevoItem = new Inventario({ user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado });
     await nuevoItem.save();
 
@@ -545,7 +564,7 @@ app.post('/api/inventario', async (req, res, next) => {
       detalles: `Se agregó el alimento a la nevera ${nuevoItem.nevera_id} del usuario ${nuevoItem.user_nombre}`
     });
 
-    res.status(200).json(responseFormat(true, 'Alimento agregado al inventario', nuevoItem));
+    res.status(200).json(responseFormat(true, 'Alimento agregado al inventario exitosamente', nuevoItem));
   } catch (error) {
     next(error);
   }
