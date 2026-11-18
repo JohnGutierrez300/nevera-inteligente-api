@@ -31,7 +31,7 @@ const responseFormat = (success, message, data = null) => ({
 });
 
 // ==========================================
-// MODELOS DE MONGOOSE
+// MODELOS DE MONGOOSE (Con Hooks de Integridad Nativa)
 // ==========================================
 
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
@@ -41,25 +41,85 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   password_hash: { type: String, required: true }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
 
-const Categoria = mongoose.model('Categoria', new mongoose.Schema({
+const categoriaSchema = new mongoose.Schema({
   _id: { type: String, required: true }
-}, { collection: 'categorias', _id: false, versionKey: false }));
+}, { collection: 'categorias', _id: false, versionKey: false });
 
-const UnidadMedida = mongoose.model('UnidadMedida', new mongoose.Schema({
+// Hook nativo: Impide borrar una Categoría si hay productos usándola
+categoriaSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function(next) {
+  const query = this.getFilter();
+  const categoriaId = query._id || query.id;
+  if (categoriaId) {
+    const productoUsando = await mongoose.model('Producto').exists({ categoria_nombre: categoriaId });
+    if (productoUsando) {
+      return next(new Error('Restricción de base de datos: No se puede eliminar la categoría porque tiene productos asociados.'));
+    }
+  }
+  next();
+});
+
+const Categoria = mongoose.model('Categoria', categoriaSchema);
+
+const unidadMedidaSchema = new mongoose.Schema({
   _id: { type: String, required: true },
   abreviatura: { type: String, required: true }
-}, { collection: 'unidades_medida', _id: false, versionKey: false }));
+}, { collection: 'unidades_medida', _id: false, versionKey: false });
 
-const Marca = mongoose.model('Marca', new mongoose.Schema({
+// Hook nativo: Impide borrar una Unidad de Medida si está en el inventario
+unidadMedidaSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function(next) {
+  const query = this.getFilter();
+  const unidadId = query._id || query.id;
+  if (unidadId) {
+    const inventarioUsando = await mongoose.model('Inventario').exists({ unidad_medida_nombre: unidadId });
+    if (inventarioUsando) {
+      return next(new Error('Restricción de base de datos: No se puede eliminar la unidad de medida porque está en uso en el inventario.'));
+    }
+  }
+  next();
+});
+
+const UnidadMedida = mongoose.model('UnidadMedida', unidadMedidaSchema);
+
+const marcaSchema = new mongoose.Schema({
   _id: { type: String, required: true }
-}, { collection: 'marcas', _id: false, versionKey: false }));
+}, { collection: 'marcas', _id: false, versionKey: false });
 
-const Producto = mongoose.model('Producto', new mongoose.Schema({
+// Hook nativo: Impide borrar una Marca si hay productos usándola
+marcaSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function(next) {
+  const query = this.getFilter();
+  const marcaId = query._id || query.id;
+  if (marcaId) {
+    const productoUsando = await mongoose.model('Producto').exists({ marca_nombre: marcaId });
+    if (productoUsando) {
+      return next(new Error('Restricción de base de datos: No se puede eliminar la marca porque tiene productos asociados.'));
+    }
+  }
+  next();
+});
+
+const Marca = mongoose.model('Marca', marcaSchema);
+
+const productoSchema = new mongoose.Schema({
   _id: { type: String, required: true },
   marca_nombre: { type: String, ref: 'Marca', required: true },
   categoria_nombre: { type: String, ref: 'Categoria', required: true },
   nombre: { type: String, required: true }
-}, { collection: 'productos', _id: false, versionKey: false }));
+}, { collection: 'productos', _id: false, versionKey: false });
+
+// Hook nativo: Impide borrar un Producto si está en el inventario
+productoSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function(next) {
+  const query = this.getFilter();
+  const productoId = query._id || query.id;
+  if (productoId) {
+    const inventarioUsando = await mongoose.model('Inventario').exists({ producto_id: productoId });
+    if (inventarioUsando) {
+      return next(new Error('Restricción de base de datos: No se puede eliminar el producto porque tiene registros en el inventario.'));
+    }
+  }
+  next();
+});
+
+const Producto = mongoose.model('Producto', productoSchema);
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
@@ -86,9 +146,24 @@ const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema(
   probabilidad_desperdicio: { type: Number }
 }, { collection: 'patrones_predictivos', _id: false, versionKey: false }));
 
-const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
+const ingredienteSchema = new mongoose.Schema({
   _id: { type: String, required: true }
-}, { collection: 'ingredientes', _id: false, versionKey: false }));
+}, { collection: 'ingredientes', _id: false, versionKey: false });
+
+// Hook nativo: Impide borrar un Ingrediente si está en un Meal Prep
+ingredienteSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function(next) {
+  const query = this.getFilter();
+  const ingredienteId = query._id || query.id;
+  if (ingredienteId) {
+    const mealPrepUsando = await mongoose.model('MealPrep').exists({ ingrediente_nombre: ingredienteId });
+    if (mealPrepUsando) {
+      return next(new Error('Restricción de base de datos: No se puede eliminar el ingrediente porque está en uso en un plan de comidas (Meal Prep).'));
+    }
+  }
+  next();
+});
+
+const Ingrediente = mongoose.model('Ingrediente', ingredienteSchema);
 
 const mealPrepSchema = new mongoose.Schema({
   patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true, unique: true },
@@ -174,7 +249,7 @@ app.delete('/api/usuarios/:id', async (req, res, next) => {
   }
 });
 
-// 2. Categorías (Con restricción: No eliminar si tiene productos asociados)
+// 2. Categorías
 app.post('/api/categorias', async (req, res, next) => {
   try {
     const nuevaCategoria = new Categoria(req.body);
@@ -196,13 +271,7 @@ app.get('/api/categorias', async (req, res, next) => {
 
 app.delete('/api/categorias/:id', async (req, res, next) => {
   try {
-    const categoriaId = req.params.id;
-    const productoUsandoCategoria = await Producto.exists({ categoria_nombre: categoriaId });
-    if (productoUsandoCategoria) {
-      return res.status(200).json(responseFormat(false, 'Restricción de integridad: No se puede eliminar la categoría porque tiene productos asociados.', null));
-    }
-
-    const categoriaEliminada = await Categoria.findByIdAndDelete(categoriaId);
+    const categoriaEliminada = await Categoria.findByIdAndDelete(req.params.id);
     if (!categoriaEliminada) {
       return res.status(200).json(responseFormat(false, 'Categoría no encontrada', null));
     }
@@ -212,7 +281,7 @@ app.delete('/api/categorias/:id', async (req, res, next) => {
   }
 });
 
-// 3. Marcas (Con restricción: No eliminar si tiene productos asociados)
+// 3. Marcas
 app.post('/api/marcas', async (req, res, next) => {
   try {
     const nuevaMarca = new Marca(req.body);
@@ -234,13 +303,7 @@ app.get('/api/marcas', async (req, res, next) => {
 
 app.delete('/api/marcas/:id', async (req, res, next) => {
   try {
-    const marcaId = req.params.id;
-    const productoUsandoMarca = await Producto.exists({ marca_nombre: marcaId });
-    if (productoUsandoMarca) {
-      return res.status(200).json(responseFormat(false, 'Restricción de integridad: No se puede eliminar la marca porque tiene productos asociados.', null));
-    }
-
-    const marcaEliminada = await Marca.findByIdAndDelete(marcaId);
+    const marcaEliminada = await Marca.findByIdAndDelete(req.params.id);
     if (!marcaEliminada) {
       return res.status(200).json(responseFormat(false, 'Marca no encontrada', null));
     }
@@ -250,7 +313,7 @@ app.delete('/api/marcas/:id', async (req, res, next) => {
   }
 });
 
-// 4. Unidades de Medida (Con restricción: No eliminar si está en el inventario)
+// 4. Unidades de Medida
 app.post('/api/unidades_medida', async (req, res, next) => {
   try {
     const nuevaUnidad = new UnidadMedida(req.body);
@@ -272,13 +335,7 @@ app.get('/api/unidades_medida', async (req, res, next) => {
 
 app.delete('/api/unidades_medida/:id', async (req, res, next) => {
   try {
-    const unidadId = req.params.id;
-    const inventarioUsandoUnidad = await Inventario.exists({ unidad_medida_nombre: unidadId });
-    if (inventarioUsandoUnidad) {
-      return res.status(200).json(responseFormat(false, 'Restricción de integridad: No se puede eliminar la unidad de medida porque está en uso en el inventario.', null));
-    }
-
-    const unidadEliminada = await UnidadMedida.findByIdAndDelete(unidadId);
+    const unidadEliminada = await UnidadMedida.findByIdAndDelete(req.params.id);
     if (!unidadEliminada) {
       return res.status(200).json(responseFormat(false, 'Unidad de medida no encontrada', null));
     }
@@ -288,7 +345,7 @@ app.delete('/api/unidades_medida/:id', async (req, res, next) => {
   }
 });
 
-// 5. Productos (Con restricción: No eliminar si está en el inventario)
+// 5. Productos
 app.post('/api/productos', async (req, res, next) => {
   try {
     const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
@@ -328,13 +385,7 @@ app.get('/api/productos', async (req, res, next) => {
 
 app.delete('/api/productos/:id', async (req, res, next) => {
   try {
-    const productoId = req.params.id;
-    const inventarioUsandoProducto = await Inventario.exists({ producto_id: productoId });
-    if (inventarioUsandoProducto) {
-      return res.status(200).json(responseFormat(false, 'Restricción de integridad: No se puede eliminar el producto porque tiene registros activos en el inventario.', null));
-    }
-
-    const productoEliminado = await Producto.findByIdAndDelete(productoId);
+    const productoEliminado = await Producto.findByIdAndDelete(req.params.id);
     if (!productoEliminado) {
       return res.status(200).json(responseFormat(false, 'Producto no encontrado', null));
     }
@@ -515,7 +566,7 @@ app.get('/api/patrones_predictivos', async (req, res, next) => {
   }
 });
 
-// 9. Ingredientes (Con restricción: No eliminar si está en un Meal Prep)
+// 9. Ingredientes
 app.post('/api/ingredientes', async (req, res, next) => {
   try {
     const nuevoIngrediente = new Ingrediente(req.body);
@@ -537,13 +588,7 @@ app.get('/api/ingredientes', async (req, res, next) => {
 
 app.delete('/api/ingredientes/:id', async (req, res, next) => {
   try {
-    const ingredienteId = req.params.id;
-    const mealPrepUsandoIngrediente = await MealPrep.exists({ ingrediente_nombre: ingredienteId });
-    if (mealPrepUsandoIngrediente) {
-      return res.status(200).json(responseFormat(false, 'Restricción de integridad: No se puede eliminar el ingrediente porque está siendo utilizado en un plan de comidas (Meal Prep).', null));
-    }
-
-    const ingredienteEliminado = await Ingrediente.findByIdAndDelete(ingredienteId);
+    const ingredienteEliminado = await Ingrediente.findByIdAndDelete(req.params.id);
     if (!ingredienteEliminado) {
       return res.status(200).json(responseFormat(false, 'Ingrediente no encontrado', null));
     }
