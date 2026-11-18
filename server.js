@@ -165,7 +165,7 @@ app.get('/api/usuarios', async (req, res, next) => {
   }
 });
 
-// 1. Usuarios (Con eliminación en cascada completa y limpia de huérfanos)
+// 1. Usuarios (Eliminación en cascada de todo lo conectado, conservando intacto el historial)
 app.delete('/api/usuarios/:id', async (req, res, next) => {
   try {
     const usuarioId = req.params.id;
@@ -178,17 +178,17 @@ app.delete('/api/usuarios/:id', async (req, res, next) => {
       throw err;
     }
 
-    // 2. Encontrar los patrones predictivos del usuario
+    // 2. Buscar los patrones predictivos del usuario para limpiar sus meal preps asociados
     const patronesUsuario = await PatronPredictivo.find({ user_nombre: usuarioId }).lean();
     const patronIds = patronesUsuario.map(p => p._id);
 
-    // 3. Eliminación en cascada en cadena (Cero registros huérfanos en toda la BD)
+    // 3. EJECUTAR EL BARRIDO (Se borra todo lo conectado, pero el historial de inventario NO se toca)
     await MealPrep.deleteMany({ patron_predictivo_id: { $in: patronIds } });
     await PatronPredictivo.deleteMany({ user_nombre: usuarioId });
     await Inventario.deleteMany({ user_nombre: usuarioId });
     await Notificacion.deleteMany({ user_nombre: usuarioId });
 
-    res.status(200).json(responseFormat(true, 'Usuario y todos sus datos asociados eliminados exitosamente en cascada', usuarioEliminado));
+    res.status(200).json(responseFormat(true, 'Usuario y sus datos conectados eliminados exitosamente (Historial conservado para auditoría)', usuarioEliminado));
   } catch (error) {
     next(error);
   }
