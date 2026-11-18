@@ -11,39 +11,7 @@ paths:
   # ==========================================
   # 1. MÓDULO DE USUARIOS
   # ==========================================
-  /api/usuarios:
-    post:
-      tags:
-        - Usuarios
-      operationId: createUser
-      summary: Crear un nuevo usuario (Validando unicidad y seguridad)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UsuarioInput'
-      responses:
-        "200":
-          description: Resultado de la operación (exitoso o rechazo de negocio)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
-    get:
-      tags:
-        - Usuarios
-      operationId: listUsers
-      summary: Listar todos los usuarios
-      responses:
-        "200":
-          description: Lista obtenida exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
-
-  /api/usuarios/{id}:
+/api/usuarios/{id}:
     get:
       tags:
         - Usuarios
@@ -58,6 +26,30 @@ paths:
       responses:
         "200":
           description: Usuario obtenido o mensaje de no encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    put:
+      tags:
+        - Usuarios
+      operationId: updateUser
+      summary: Actualizar datos del usuario (Nombre, correo o contraseña con validación de seguridad)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UsuarioInput'
+      responses:
+        "200":
+          description: Actualizado exitosamente o rechazo por reglas de negocio / seguridad
           content:
             application/json:
               schema:

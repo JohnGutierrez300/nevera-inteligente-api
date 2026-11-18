@@ -234,6 +234,58 @@ app.get('/api/usuarios/:id', async (req, res, next) => {
   }
 });
 
+// 1. Usuarios - Actualización individual (PUT) con validaciones de seguridad y unicidad
+app.put('/api/usuarios/:id', async (req, res, next) => {
+  try {
+    const usuarioId = req.params.id;
+    const { nombre, email, password_hash } = req.body;
+
+    // Verificar que el usuario exista
+    const usuarioExistente = await Usuario.findById(usuarioId);
+    if (!usuarioExistente) {
+      return res.status(200).json(responseFormat(false, 'Usuario no encontrado para actualizar', null));
+    }
+
+    // Si se desea actualizar el nombre o el correo, verificar que no pertenezcan a otro usuario registrado
+    if (nombre || email) {
+      const conflicto = await Usuario.findOne({
+        _id: { $ne: usuarioId },
+        $or: [
+          ...(nombre ? [{ nombre }] : []),
+          ...(email ? [{ email }] : [])
+        ]
+      });
+      if (conflicto) {
+        return res.status(200).json(responseFormat(false, 'El nombre de usuario o el correo electrónico ya están en uso por otro registro.', null));
+      }
+    }
+
+    // Si se envía una nueva contraseña, validar que cumpla con la política de seguridad estricta
+    if (password_hash) {
+      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,}$/;
+      if (!passwordRegex.test(password_hash)) {
+        return res.status(200).json(responseFormat(false, 'La nueva contraseña no cumple con los requisitos de seguridad: mínimo 12 caracteres, incluir mayúsculas, minúsculas, números y símbolos especiales.', null));
+      }
+    }
+
+    // Construir objeto con los campos permitidos a actualizar
+    const datosActualizados = {};
+    if (nombre) datosActualizados.nombre = nombre;
+    if (email) datosActualizados.email = email;
+    if (password_hash) datosActualizados.password_hash = password_hash;
+
+    const usuarioActualizado = await Usuario.findByIdAndUpdate(
+      usuarioId,
+      datosActualizados,
+      { new: true, runValidators: true }
+    );
+
+    res.status(200).json(responseFormat(true, 'Usuario actualizado exitosamente', usuarioActualizado));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete('/api/usuarios/:id', async (req, res, next) => {
   try {
     const usuarioId = req.params.id;
