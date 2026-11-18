@@ -11,7 +11,39 @@ paths:
   # ==========================================
   # 1. MÓDULO DE USUARIOS
   # ==========================================
-/api/usuarios/{id}:
+  /api/usuarios:
+    post:
+      tags:
+        - Usuarios
+      operationId: createUser
+      summary: Crear un nuevo usuario (Validando unicidad y seguridad)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UsuarioInput'
+      responses:
+        "200":
+          description: Resultado de la operación (exitoso o rechazo de negocio)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    get:
+      tags:
+        - Usuarios
+      operationId: listUsers
+      summary: Listar todos los usuarios
+      responses:
+        "200":
+          description: Lista obtenida exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /api/usuarios/{id}:
     get:
       tags:
         - Usuarios
