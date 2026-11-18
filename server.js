@@ -214,10 +214,22 @@ app.post('/api/usuarios', async (req, res, next) => {
   }
 });
 
+// Búsqueda y listado de Usuarios en tiempo real por query params (?busqueda=...)
 app.get('/api/usuarios', async (req, res, next) => {
   try {
-    const usuarios = await Usuario.find();
-    res.status(200).json(responseFormat(true, 'Lista de usuarios obtenida', usuarios));
+    const { busqueda } = req.query;
+    let filtro = {};
+    if (busqueda) {
+      filtro = {
+        $or: [
+          { _id: { $regex: busqueda, $options: 'i' } },
+          { nombre: { $regex: busqueda, $options: 'i' } },
+          { email: { $regex: busqueda, $options: 'i' } }
+        ]
+      };
+    }
+    const usuarios = await Usuario.find(filtro);
+    res.status(200).json(responseFormat(true, 'Consulta de usuarios procesada en tiempo real', usuarios));
   } catch (error) {
     next(error);
   }

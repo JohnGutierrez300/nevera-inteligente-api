@@ -1,7 +1,7 @@
 openapi: '3.0.0'
 info:
   title: Nevera Inteligente API
-  description: API RESTful con arquitectura en árbol jerárquico, claves naturales, aislamiento por usuario, restricciones de integridad y consultas individuales.
+  description: API RESTful con arquitectura jerárquica, validaciones en tiempo real y respuestas unificadas.
   version: '1.0.0'
 servers:
 - url: https://nevera-inteligente-api.onrender.com
@@ -16,7 +16,7 @@ paths:
       tags:
         - Usuarios
       operationId: createUser
-      summary: Crear un nuevo usuario (Validando unicidad y seguridad)
+      summary: Crear un nuevo usuario (Valida unicidad y existencia en tiempo real)
       requestBody:
         required: true
         content:
@@ -25,7 +25,7 @@ paths:
               $ref: '#/components/schemas/UsuarioInput'
       responses:
         "200":
-          description: Resultado de la operación (exitoso o rechazo de negocio)
+          description: Resultado de la validación y registro
           content:
             application/json:
               schema:
@@ -34,7 +34,14 @@ paths:
       tags:
         - Usuarios
       operationId: listUsers
-      summary: Listar todos los usuarios
+      summary: Listar o buscar usuarios en tiempo real por nombre o correo
+      parameters:
+        - name: busqueda
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Texto para filtrar usuarios en tiempo real
       responses:
         "200":
           description: Lista obtenida exitosamente
@@ -48,7 +55,7 @@ paths:
       tags:
         - Usuarios
       operationId: getUserById
-      summary: Consultar un usuario de manera individual por su ID
+      summary: Consultar un usuario individual por su ID (Validación en tiempo real)
       parameters:
         - name: id
           in: path
@@ -57,7 +64,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Usuario obtenido o mensaje de no encontrado
+          description: Usuario encontrado o mensaje de error
           content:
             application/json:
               schema:
@@ -66,7 +73,7 @@ paths:
       tags:
         - Usuarios
       operationId: updateUser
-      summary: Actualizar un usuario (Cambiar nombre, correo o contraseña de forma segura)
+      summary: Actualizar un usuario validando duplicados en tiempo real
       parameters:
         - name: id
           in: path
@@ -81,7 +88,7 @@ paths:
               $ref: '#/components/schemas/UsuarioInput'
       responses:
         "200":
-          description: Actualizado exitosamente o rechazo por reglas de negocio / seguridad
+          description: Actualizado exitosamente
           content:
             application/json:
               schema:
@@ -90,7 +97,7 @@ paths:
       tags:
         - Usuarios
       operationId: deleteUser
-      summary: Eliminar un usuario y sus datos conectados (conservando historial)
+      summary: Eliminar un usuario y sus datos conectados
       parameters:
         - name: id
           in: path
@@ -99,7 +106,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Usuario eliminado exitosamente
+          description: Eliminado exitosamente
           content:
             application/json:
               schema:
@@ -113,7 +120,7 @@ paths:
       tags:
         - Categorías
       operationId: createCategory
-      summary: Crear una nueva categoría de alimentos
+      summary: Crear categoría validando existencia previa
       requestBody:
         required: true
         content:
@@ -134,7 +141,7 @@ paths:
       summary: Listar categorías
       responses:
         "200":
-          description: Lista obtenida exitosamente
+          description: Lista obtenida
           content:
             application/json:
               schema:
@@ -145,7 +152,7 @@ paths:
       tags:
         - Categorías
       operationId: getCategoryById
-      summary: Consultar una categoría individual por su ID
+      summary: Consultar categoría individual por ID
       parameters:
         - name: id
           in: path
@@ -163,7 +170,7 @@ paths:
       tags:
         - Categorías
       operationId: deleteCategory
-      summary: Eliminar categoría (Bloqueada si tiene productos asociados)
+      summary: Eliminar categoría (Protegida por integridad)
       parameters:
         - name: id
           in: path
@@ -172,7 +179,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminada exitosamente o restricción aplicada
+          description: Resultado de la operación
           content:
             application/json:
               schema:
@@ -186,7 +193,7 @@ paths:
       tags:
         - Marcas
       operationId: createBrand
-      summary: Crear una nueva marca
+      summary: Crear marca
       requestBody:
         required: true
         content:
@@ -207,7 +214,7 @@ paths:
       summary: Listar marcas
       responses:
         "200":
-          description: Lista obtenida exitosamente
+          description: Lista obtenida
           content:
             application/json:
               schema:
@@ -218,7 +225,7 @@ paths:
       tags:
         - Marcas
       operationId: getBrandById
-      summary: Consultar una marca individual por su ID
+      summary: Consultar marca individual por ID
       parameters:
         - name: id
           in: path
@@ -236,7 +243,7 @@ paths:
       tags:
         - Marcas
       operationId: deleteBrand
-      summary: Eliminar una marca (Bloqueada si tiene productos asociados)
+      summary: Eliminar marca
       parameters:
         - name: id
           in: path
@@ -245,7 +252,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminada exitosamente o restricción aplicada
+          description: Resultado
           content:
             application/json:
               schema:
@@ -259,7 +266,7 @@ paths:
       tags:
         - Unidades de Medida
       operationId: createUnit
-      summary: Crear una nueva unidad de medida
+      summary: Crear unidad de medida
       requestBody:
         required: true
         content:
@@ -277,10 +284,10 @@ paths:
       tags:
         - Unidades de Medida
       operationId: listUnits
-      summary: Listar unidades de medida
+      summary: Listar unidades
       responses:
         "200":
-          description: Lista obtenida exitosamente
+          description: Lista obtenida
           content:
             application/json:
               schema:
@@ -291,7 +298,7 @@ paths:
       tags:
         - Unidades de Medida
       operationId: getUnitById
-      summary: Consultar una unidad de medida individual por su ID
+      summary: Consultar unidad individual por ID
       parameters:
         - name: id
           in: path
@@ -300,7 +307,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenida exitosamente
+          description: Obtenida
           content:
             application/json:
               schema:
@@ -309,7 +316,7 @@ paths:
       tags:
         - Unidades de Medida
       operationId: deleteUnit
-      summary: Eliminar unidad (Bloqueada si está en uso en el inventario)
+      summary: Eliminar unidad
       parameters:
         - name: id
           in: path
@@ -318,7 +325,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminada exitosamente o restricción aplicada
+          description: Resultado
           content:
             application/json:
               schema:
@@ -332,7 +339,7 @@ paths:
       tags:
         - Ingredientes
       operationId: createIngredient
-      summary: Crear un nuevo ingrediente base
+      summary: Crear ingrediente
       requestBody:
         required: true
         content:
@@ -341,7 +348,7 @@ paths:
               $ref: '#/components/schemas/IngredienteInput'
       responses:
         "200":
-          description: Creado exitosamente
+          description: Creado
           content:
             application/json:
               schema:
@@ -353,7 +360,7 @@ paths:
       summary: Listar ingredientes
       responses:
         "200":
-          description: Lista obtenida exitosamente
+          description: Lista obtenida
           content:
             application/json:
               schema:
@@ -364,7 +371,7 @@ paths:
       tags:
         - Ingredientes
       operationId: getIngredientById
-      summary: Consultar un ingrediente individual por su ID
+      summary: Consultar ingrediente individual por ID
       parameters:
         - name: id
           in: path
@@ -373,7 +380,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido exitosamente
+          description: Obtenido
           content:
             application/json:
               schema:
@@ -382,7 +389,7 @@ paths:
       tags:
         - Ingredientes
       operationId: deleteIngredient
-      summary: Eliminar ingrediente (Bloqueado si está en un Meal Prep)
+      summary: Eliminar ingrediente
       parameters:
         - name: id
           in: path
@@ -391,7 +398,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminado exitosamente o restricción aplicada
+          description: Resultado
           content:
             application/json:
               schema:
@@ -405,7 +412,7 @@ paths:
       tags:
         - Productos
       operationId: createProduct
-      summary: Crear un nuevo producto comercial
+      summary: Crear producto validando referencias en tiempo real
       requestBody:
         required: true
         content:
@@ -414,7 +421,7 @@ paths:
               $ref: '#/components/schemas/ProductoInput'
       responses:
         "200":
-          description: Creado exitosamente o error de referencia
+          description: Creado exitosamente
           content:
             application/json:
               schema:
@@ -426,7 +433,7 @@ paths:
       summary: Listar productos
       responses:
         "200":
-          description: Lista obtenida exitosamente
+          description: Lista obtenida
           content:
             application/json:
               schema:
@@ -437,7 +444,7 @@ paths:
       tags:
         - Productos
       operationId: getProductById
-      summary: Consultar un producto individual por su ID
+      summary: Consultar producto individual por ID
       parameters:
         - name: id
           in: path
@@ -446,7 +453,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido exitosamente
+          description: Obtenido
           content:
             application/json:
               schema:
@@ -455,7 +462,7 @@ paths:
       tags:
         - Productos
       operationId: deleteProduct
-      summary: Eliminar producto (Bloqueado si está en el inventario)
+      summary: Eliminar producto
       parameters:
         - name: id
           in: path
@@ -464,7 +471,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminado exitosamente o restricción aplicada
+          description: Resultado
           content:
             application/json:
               schema:
@@ -478,7 +485,7 @@ paths:
       tags:
         - Inventario
       operationId: addInventoryItem
-      summary: Agregar alimento físico a la nevera
+      summary: Agregar alimento validando usuario y producto en tiempo real
       requestBody:
         required: true
         content:
@@ -496,7 +503,7 @@ paths:
       tags:
         - Inventario
       operationId: listInventoryItems
-      summary: Listar alimentos en inventario (Filtrable por usuario y nevera)
+      summary: Listar inventario (Filtrable en tiempo real por usuario y nevera)
       parameters:
         - name: user_nombre
           in: query
@@ -510,7 +517,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Lista obtenida exitosamente
+          description: Filtrado exitosamente
           content:
             application/json:
               schema:
@@ -521,7 +528,7 @@ paths:
       tags:
         - Inventario
       operationId: getInventoryItem
-      summary: Obtener detalle de un alimento por ID
+      summary: Consultar detalle de un alimento por ID
       parameters:
         - name: itemId
           in: path
@@ -530,7 +537,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Detalle obtenido exitosamente
+          description: Obtenido
           content:
             application/json:
               schema:
@@ -539,7 +546,7 @@ paths:
       tags:
         - Inventario
       operationId: updateInventoryItem
-      summary: Actualizar estado o cantidad
+      summary: Actualizar inventario
       parameters:
         - name: itemId
           in: path
@@ -554,7 +561,7 @@ paths:
               $ref: '#/components/schemas/InventarioInput'
       responses:
         "200":
-          description: Actualizado exitosamente
+          description: Actualizado
           content:
             application/json:
               schema:
@@ -563,16 +570,16 @@ paths:
       tags:
         - Inventario
       operationId: deleteInventoryItem
-      summary: Eliminar alimento del inventario (Genera snapshot en historial)
+      summary: Eliminar del inventario
       parameters:
         - name: itemId
           in: path
-          required: true
+          required:
           schema:
             type: string
       responses:
         "200":
-          description: Eliminado exitosamente
+          description: Eliminado
           content:
             application/json:
               schema:
@@ -586,10 +593,10 @@ paths:
       tags:
         - Historial de Inventario
       operationId: listInventoryHistory
-      summary: Consultar la bitácora de cambios con respaldo (snapshot)
+      summary: Listar bitácora de cambios
       responses:
         "200":
-          description: Historial obtenido exitosamente
+          description: Historial obtenido
           content:
             application/json:
               schema:
@@ -600,7 +607,7 @@ paths:
       tags:
         - Historial de Inventario
       operationId: getHistoryById
-      summary: Consultar un registro individual del historial por ID
+      summary: Consultar historial individual por ID
       parameters:
         - name: id
           in: path
@@ -609,7 +616,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Registro obtenido exitosamente
+          description: Obtenido
           content:
             application/json:
               schema:
@@ -623,7 +630,7 @@ paths:
       tags:
         - Patrones Predictivos
       operationId: createPredictivePattern
-      summary: Crear un nuevo patrón predictivo de consumo
+      summary: Crear patrón predictivo
       requestBody:
         required: true
         content:
@@ -632,7 +639,7 @@ paths:
               $ref: '#/components/schemas/PatronPredictivoInput'
       responses:
         "200":
-          description: Creado exitosamente
+          description: Creado
           content:
             application/json:
               schema:
@@ -641,7 +648,7 @@ paths:
       tags:
         - Patrones Predictivos
       operationId: getPredictivePatterns
-      summary: Obtener patrones predictivos (Filtrable por usuario)
+      summary: Obtener patrones
       parameters:
         - name: user_nombre
           in: query
@@ -650,7 +657,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido exitosamente
+          description: Obtenido
           content:
             application/json:
               schema:
@@ -661,7 +668,7 @@ paths:
       tags:
         - Patrones Predictivos
       operationId: getPredictivePatternById
-      summary: Consultar un patrón predictivo individual por su ID
+      summary: Consultar patrón individual por ID
       parameters:
         - name: id
           in: path
@@ -670,7 +677,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido exitosamente
+          description: Obtenido
           content:
             application/json:
               schema:
@@ -684,7 +691,7 @@ paths:
       tags:
         - Planes de Comida (Meal Preps)
       operationId: createMealPrep
-      summary: Crear plan de comidas vinculado
+      summary: Crear plan de comida validando llaves foráneas en tiempo real
       requestBody:
         required: true
         content:
@@ -693,7 +700,7 @@ paths:
               $ref: '#/components/schemas/MealPrepInput'
       responses:
         "200":
-          description: Creado exitosamente
+          description: Creado
           content:
             application/json:
               schema:
@@ -702,10 +709,10 @@ paths:
       tags:
         - Planes de Comida (Meal Preps)
       operationId: listMealPreps
-      summary: Listar planes de comida
+      summary: Listar planes
       responses:
         "200":
-          description: Listado obtenido exitosamente
+          description: Listado obtenido
           content:
             application/json:
               schema:
@@ -716,7 +723,7 @@ paths:
       tags:
         - Planes de Comida (Meal Preps)
       operationId: getMealPrepById
-      summary: Consultar un plan de comida individual por su ID
+      summary: Consultar plan individual por ID
       parameters:
         - name: id
           in: path
@@ -725,7 +732,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido exitosamente
+          description: Obtenido
           content:
             application/json:
               schema:
@@ -734,7 +741,7 @@ paths:
       tags:
         - Planes de Comida (Meal Preps)
       operationId: deleteMealPrep
-      summary: Eliminar un plan de comidas por su ID
+      summary: Eliminar plan
       parameters:
         - name: id
           in: path
@@ -743,7 +750,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminado exitosamente
+          description: Eliminado
           content:
             application/json:
               schema:
@@ -757,7 +764,7 @@ paths:
       tags:
         - Notificaciones
       operationId: createNotification
-      summary: Crear una alerta o notificación para el usuario
+      summary: Crear notificación
       requestBody:
         required: true
         content:
@@ -766,7 +773,7 @@ paths:
               $ref: '#/components/schemas/NotificacionInput'
       responses:
         "200":
-          description: Creado exitosamente
+          description: Creado
           content:
             application/json:
               schema:
@@ -775,7 +782,7 @@ paths:
       tags:
         - Notificaciones
       operationId: listNotifications
-      summary: Listar notificaciones (Filtrable por usuario)
+      summary: Listar notificaciones
       parameters:
         - name: user_nombre
           in: query
@@ -784,7 +791,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenidas exitosamente
+          description: Obtenidas
           content:
             application/json:
               schema:
@@ -795,7 +802,7 @@ paths:
       tags:
         - Notificaciones
       operationId: getNotificationById
-      summary: Consultar una notificación individual por su ID
+      summary: Consultar notificación individual por ID
       parameters:
         - name: id
           in: path
@@ -804,7 +811,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenida exitosamente
+          description: Obtenida
           content:
             application/json:
               schema:
@@ -813,7 +820,7 @@ paths:
       tags:
         - Notificaciones
       operationId: deleteNotification
-      summary: Eliminar una notificación por su ID
+      summary: Eliminar notificación
       parameters:
         - name: id
           in: path
@@ -822,7 +829,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminada exitosamente
+          description: Eliminado
           content:
             application/json:
               schema:
@@ -846,80 +853,65 @@ components:
       properties:
         id:
           type: string
-          description: Identificador único del usuario (Numérico)
+          description: ID numérico del usuario
         nombre:
           type: string
-          description: Nombre del usuario (Único)
+          description: Nombre único
         email:
           type: string
           format: email
-          description: Correo electrónico (Único)
         password_hash:
           type: string
-          description: Contraseña segura (mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos)
 
     CategoriaInput:
       type: object
       properties:
         _id:
           type: string
-          description: Nombre de la categoría (Clave Primaria natural)
 
     MarcaInput:
       type: object
       properties:
         _id:
           type: string
-          description: Nombre de la marca (Clave Primaria natural)
 
     UnidadMedidaInput:
       type: object
       properties:
         _id:
           type: string
-          description: Nombre de la unidad (Clave Primaria natural)
         abreviatura:
           type: string
-          description: Símbolo abreviado (Ej. g, ml, und)
 
     IngredienteInput:
       type: object
       properties:
         _id:
           type: string
-          description: Nombre del ingrediente base (Clave Primaria natural)
 
     ProductoInput:
       type: object
       properties:
         _id:
           type: string
-          description: Código personalizado del producto (Ej. 101)
         marca_nombre:
           type: string
-          description: Nombre o ID de la marca (FK)
         categoria_nombre:
           type: string
-          description: Nombre o ID de la categoría (FK)
         nombre:
           type: string
-          description: Nombre específico del producto
 
     InventarioInput:
       type: object
       properties:
         user_nombre:
           type: string
-          description: ID del usuario dueño (FK)
         nevera_id:
           type: string
-          description: Identificador de la nevera
         producto_id:
           type: string
-          description: Código personalizado del producto (FK)
         unidad_medida_nombre:
           type: string
-          description: Nombre de la unidad de medida (FK)
         cantidad:
           type: number
         fecha_vencimiento:
@@ -939,10 +931,8 @@ components:
       properties:
         _id:
           type: string
-          description: Código personalizado del patrón (Ej. PAT-01)
         user_nombre:
           type: string
-          description: ID del usuario evaluado (FK)
         frecuencia_compra_dias:
           type: number
         probabilidad_desperdicio:
@@ -953,7 +943,7 @@ components:
       properties:
         patron_predictivo_id:
           type: string
-          description: Código del patrón predictivo (FK)
+          description: ID del patrón predictivo (FK)
         ingrediente_nombre:
           type: string
           description: Nombre del ingrediente base (FK)
@@ -965,7 +955,6 @@ components:
       properties:
         user_nombre:
           type: string
-          description: ID o nombre del usuario al que va dirigida la alerta (FK)
         mensaje:
           type: string
         tipo:
