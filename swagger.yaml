@@ -66,7 +66,7 @@ paths:
       tags:
         - Usuarios
       operationId: updateUser
-      summary: Actualizar datos del usuario (Nombre, correo o contraseña con validación de seguridad)
+      summary: Actualizar un usuario (Cambiar nombre, correo o contraseña de forma segura)
       parameters:
         - name: id
           in: path

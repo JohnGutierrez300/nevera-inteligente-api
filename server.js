@@ -180,7 +180,7 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
 // RUTAS DE LA API RESTful
 // ==========================================
 
-// 1. Usuarios (Con consulta individual GET /api/usuarios/:id)
+// 1. Usuarios
 app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
@@ -195,9 +195,10 @@ app.post('/api/usuarios', async (req, res, next) => {
       return res.status(200).json(responseFormat(false, 'La contraseña no cumple con los requisitos de seguridad: mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos especiales.', null));
     }
 
+    // Consulta en tiempo real para verificar unicidad antes de registrar
     const usuarioExistente = await Usuario.findOne({ $or: [{ _id: idAValidar }, { nombre }, { email }] });
     if (usuarioExistente) {
-      return res.status(200).json(responseFormat(false, 'El ID, nombre de usuario o correo electrónico ya se encuentran registrados.', null));
+      return res.status(200).json(responseFormat(false, 'El ID, nombre de usuario o correo electrónico ya se encuentran registrados en el sistema.', null));
     }
 
     const nuevoUsuario = new Usuario({ 
@@ -234,19 +235,16 @@ app.get('/api/usuarios/:id', async (req, res, next) => {
   }
 });
 
-// 1. Usuarios - Actualización individual (PUT) con validaciones de seguridad y unicidad
 app.put('/api/usuarios/:id', async (req, res, next) => {
   try {
     const usuarioId = req.params.id;
     const { nombre, email, password_hash } = req.body;
 
-    // Verificar que el usuario exista
     const usuarioExistente = await Usuario.findById(usuarioId);
     if (!usuarioExistente) {
       return res.status(200).json(responseFormat(false, 'Usuario no encontrado para actualizar', null));
     }
 
-    // Si se desea actualizar el nombre o el correo, verificar que no pertenezcan a otro usuario registrado
     if (nombre || email) {
       const conflicto = await Usuario.findOne({
         _id: { $ne: usuarioId },
@@ -260,15 +258,13 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
       }
     }
 
-    // Si se envía una nueva contraseña, validar que cumpla con la política de seguridad estricta
     if (password_hash) {
       const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,}$/;
       if (!passwordRegex.test(password_hash)) {
-        return res.status(200).json(responseFormat(false, 'La nueva contraseña no cumple con los requisitos de seguridad: mínimo 12 caracteres, incluir mayúsculas, minúsculas, números y símbolos especiales.', null));
+        return res.status(200).json(responseFormat(false, 'La nueva contraseña no cumple con los requisitos de seguridad: mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos especiales.', null));
       }
     }
 
-    // Construir objeto con los campos permitidos a actualizar
     const datosActualizados = {};
     if (nombre) datosActualizados.nombre = nombre;
     if (email) datosActualizados.email = email;
@@ -308,7 +304,7 @@ app.delete('/api/usuarios/:id', async (req, res, next) => {
   }
 });
 
-// 2. Categorías (Con consulta individual)
+// 2. Categorías
 app.post('/api/categorias', async (req, res, next) => {
   try {
     const nuevaCategoria = new Categoria(req.body);
@@ -352,7 +348,7 @@ app.delete('/api/categorias/:id', async (req, res, next) => {
   }
 });
 
-// 3. Marcas (Con consulta individual)
+// 3. Marcas
 app.post('/api/marcas', async (req, res, next) => {
   try {
     const nuevaMarca = new Marca(req.body);
@@ -396,7 +392,7 @@ app.delete('/api/marcas/:id', async (req, res, next) => {
   }
 });
 
-// 4. Unidades de Medida (Con consulta individual)
+// 4. Unidades de Medida
 app.post('/api/unidades_medida', async (req, res, next) => {
   try {
     const nuevaUnidad = new UnidadMedida(req.body);
@@ -440,7 +436,7 @@ app.delete('/api/unidades_medida/:id', async (req, res, next) => {
   }
 });
 
-// 5. Productos (Con consulta individual)
+// 5. Productos
 app.post('/api/productos', async (req, res, next) => {
   try {
     const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
@@ -640,7 +636,7 @@ app.delete('/api/inventario/:itemId', async (req, res, next) => {
   }
 });
 
-// 7. Historial de Inventario (Con consulta individual)
+// 7. Historial de Inventario
 app.get('/api/historial_inventario', async (req, res, next) => {
   try {
     const historial = await HistorialInventario.find().lean();
@@ -662,7 +658,7 @@ app.get('/api/historial_inventario/:id', async (req, res, next) => {
   }
 });
 
-// 8. Patrones Predictivos (Con consulta individual)
+// 8. Patrones Predictivos
 app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const nuevoPatron = new PatronPredictivo(req.body);
@@ -702,7 +698,7 @@ app.get('/api/patrones_predictivos/:id', async (req, res, next) => {
   }
 });
 
-// 9. Ingredientes (Con consulta individual)
+// 9. Ingredientes
 app.post('/api/ingredientes', async (req, res, next) => {
   try {
     const nuevoIngrediente = new Ingrediente(req.body);
@@ -746,7 +742,7 @@ app.delete('/api/ingredientes/:id', async (req, res, next) => {
   }
 });
 
-// 10. Meal Preps (Con consulta individual)
+// 10. Meal Preps
 app.post('/api/meal_preps', async (req, res, next) => {
   try {
     const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
@@ -802,7 +798,7 @@ app.delete('/api/meal_preps/:id', async (req, res, next) => {
   }
 });
 
-// 11. Notificaciones (Con consulta individual)
+// 11. Notificaciones
 app.post('/api/notificaciones', async (req, res, next) => {
   try {
     const { user_nombre, mensaje, tipo, leida } = req.body;
