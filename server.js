@@ -45,7 +45,6 @@ const categoriaSchema = new mongoose.Schema({
   _id: { type: String, required: true }
 }, { collection: 'categorias', _id: false, versionKey: false });
 
-// Hook nativo: Impide borrar una Categoría si hay productos usándola
 categoriaSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function(next) {
   const query = this.getFilter();
   const categoriaId = query._id || query.id;
@@ -65,7 +64,6 @@ const unidadMedidaSchema = new mongoose.Schema({
   abreviatura: { type: String, required: true }
 }, { collection: 'unidades_medida', _id: false, versionKey: false });
 
-// Hook nativo: Impide borrar una Unidad de Medida si está en el inventario
 unidadMedidaSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function(next) {
   const query = this.getFilter();
   const unidadId = query._id || query.id;
@@ -84,7 +82,6 @@ const marcaSchema = new mongoose.Schema({
   _id: { type: String, required: true }
 }, { collection: 'marcas', _id: false, versionKey: false });
 
-// Hook nativo: Impide borrar una Marca si hay productos usándola
 marcaSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function(next) {
   const query = this.getFilter();
   const marcaId = query._id || query.id;
@@ -106,7 +103,6 @@ const productoSchema = new mongoose.Schema({
   nombre: { type: String, required: true }
 }, { collection: 'productos', _id: false, versionKey: false });
 
-// Hook nativo: Impide borrar un Producto si está en el inventario
 productoSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function(next) {
   const query = this.getFilter();
   const productoId = query._id || query.id;
@@ -150,7 +146,6 @@ const ingredienteSchema = new mongoose.Schema({
   _id: { type: String, required: true }
 }, { collection: 'ingredientes', _id: false, versionKey: false });
 
-// Hook nativo: Impide borrar un Ingrediente si está en un Meal Prep
 ingredienteSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function(next) {
   const query = this.getFilter();
   const ingredienteId = query._id || query.id;
@@ -185,7 +180,7 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
 // RUTAS DE LA API RESTful
 // ==========================================
 
-// 1. Usuarios
+// 1. Usuarios (Con consulta individual GET /api/usuarios/:id)
 app.post('/api/usuarios', async (req, res, next) => {
   try {
     const { id, nombre, email, password_hash } = req.body;
@@ -227,6 +222,18 @@ app.get('/api/usuarios', async (req, res, next) => {
   }
 });
 
+app.get('/api/usuarios/:id', async (req, res, next) => {
+  try {
+    const usuario = await Usuario.findById(req.params.id).lean();
+    if (!usuario) {
+      return res.status(200).json(responseFormat(false, 'Usuario no encontrado', null));
+    }
+    res.status(200).json(responseFormat(true, 'Usuario obtenido exitosamente', usuario));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete('/api/usuarios/:id', async (req, res, next) => {
   try {
     const usuarioId = req.params.id;
@@ -249,7 +256,7 @@ app.delete('/api/usuarios/:id', async (req, res, next) => {
   }
 });
 
-// 2. Categorías
+// 2. Categorías (Con consulta individual)
 app.post('/api/categorias', async (req, res, next) => {
   try {
     const nuevaCategoria = new Categoria(req.body);
@@ -269,6 +276,18 @@ app.get('/api/categorias', async (req, res, next) => {
   }
 });
 
+app.get('/api/categorias/:id', async (req, res, next) => {
+  try {
+    const categoria = await Categoria.findById(req.params.id).lean();
+    if (!categoria) {
+      return res.status(200).json(responseFormat(false, 'Categoría no encontrada', null));
+    }
+    res.status(200).json(responseFormat(true, 'Categoría obtenida exitosamente', categoria));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete('/api/categorias/:id', async (req, res, next) => {
   try {
     const categoriaEliminada = await Categoria.findByIdAndDelete(req.params.id);
@@ -281,7 +300,7 @@ app.delete('/api/categorias/:id', async (req, res, next) => {
   }
 });
 
-// 3. Marcas
+// 3. Marcas (Con consulta individual)
 app.post('/api/marcas', async (req, res, next) => {
   try {
     const nuevaMarca = new Marca(req.body);
@@ -301,6 +320,18 @@ app.get('/api/marcas', async (req, res, next) => {
   }
 });
 
+app.get('/api/marcas/:id', async (req, res, next) => {
+  try {
+    const marca = await Marca.findById(req.params.id).lean();
+    if (!marca) {
+      return res.status(200).json(responseFormat(false, 'Marca no encontrada', null));
+    }
+    res.status(200).json(responseFormat(true, 'Marca obtenida exitosamente', marca));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete('/api/marcas/:id', async (req, res, next) => {
   try {
     const marcaEliminada = await Marca.findByIdAndDelete(req.params.id);
@@ -313,7 +344,7 @@ app.delete('/api/marcas/:id', async (req, res, next) => {
   }
 });
 
-// 4. Unidades de Medida
+// 4. Unidades de Medida (Con consulta individual)
 app.post('/api/unidades_medida', async (req, res, next) => {
   try {
     const nuevaUnidad = new UnidadMedida(req.body);
@@ -333,6 +364,18 @@ app.get('/api/unidades_medida', async (req, res, next) => {
   }
 });
 
+app.get('/api/unidades_medida/:id', async (req, res, next) => {
+  try {
+    const unidad = await UnidadMedida.findById(req.params.id).lean();
+    if (!unidad) {
+      return res.status(200).json(responseFormat(false, 'Unidad de medida no encontrada', null));
+    }
+    res.status(200).json(responseFormat(true, 'Unidad de medida obtenida exitosamente', unidad));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete('/api/unidades_medida/:id', async (req, res, next) => {
   try {
     const unidadEliminada = await UnidadMedida.findByIdAndDelete(req.params.id);
@@ -345,7 +388,7 @@ app.delete('/api/unidades_medida/:id', async (req, res, next) => {
   }
 });
 
-// 5. Productos
+// 5. Productos (Con consulta individual)
 app.post('/api/productos', async (req, res, next) => {
   try {
     const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
@@ -378,6 +421,23 @@ app.get('/api/productos', async (req, res, next) => {
       };
     }));
     res.status(200).json(responseFormat(true, 'Lista de productos obtenida', productosCompletos));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/productos/:id', async (req, res, next) => {
+  try {
+    let producto = await Producto.findById(req.params.id).lean();
+    if (!producto) {
+      return res.status(200).json(responseFormat(false, 'Producto no encontrado', null));
+    }
+    const marca = await Marca.findById(producto.marca_nombre).lean();
+    const categoria = await Categoria.findById(producto.categoria_nombre).lean();
+    producto.marca_nombre = marca || producto.marca_nombre;
+    producto.categoria_nombre = categoria || producto.categoria_nombre;
+
+    res.status(200).json(responseFormat(true, 'Producto obtenido exitosamente', producto));
   } catch (error) {
     next(error);
   }
@@ -528,7 +588,7 @@ app.delete('/api/inventario/:itemId', async (req, res, next) => {
   }
 });
 
-// 7. Historial de Inventario
+// 7. Historial de Inventario (Con consulta individual)
 app.get('/api/historial_inventario', async (req, res, next) => {
   try {
     const historial = await HistorialInventario.find().lean();
@@ -538,7 +598,19 @@ app.get('/api/historial_inventario', async (req, res, next) => {
   }
 });
 
-// 8. Patrones Predictivos
+app.get('/api/historial_inventario/:id', async (req, res, next) => {
+  try {
+    const registro = await HistorialInventario.findById(req.params.id).lean();
+    if (!registro) {
+      return res.status(200).json(responseFormat(false, 'Registro de historial no encontrado', null));
+    }
+    res.status(200).json(responseFormat(true, 'Registro de historial obtenido exitosamente', registro));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 8. Patrones Predictivos (Con consulta individual)
 app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const nuevoPatron = new PatronPredictivo(req.body);
@@ -566,7 +638,19 @@ app.get('/api/patrones_predictivos', async (req, res, next) => {
   }
 });
 
-// 9. Ingredientes
+app.get('/api/patrones_predictivos/:id', async (req, res, next) => {
+  try {
+    const patron = await PatronPredictivo.findById(req.params.id).lean();
+    if (!patron) {
+      return res.status(200).json(responseFormat(false, 'Patrón predictivo no encontrado', null));
+    }
+    res.status(200).json(responseFormat(true, 'Patrón predictivo obtenido exitosamente', patron));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 9. Ingredientes (Con consulta individual)
 app.post('/api/ingredientes', async (req, res, next) => {
   try {
     const nuevoIngrediente = new Ingrediente(req.body);
@@ -586,6 +670,18 @@ app.get('/api/ingredientes', async (req, res, next) => {
   }
 });
 
+app.get('/api/ingredientes/:id', async (req, res, next) => {
+  try {
+    const ingrediente = await Ingrediente.findById(req.params.id).lean();
+    if (!ingrediente) {
+      return res.status(200).json(responseFormat(false, 'Ingrediente no encontrado', null));
+    }
+    res.status(200).json(responseFormat(true, 'Ingrediente obtenido exitosamente', ingrediente));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete('/api/ingredientes/:id', async (req, res, next) => {
   try {
     const ingredienteEliminado = await Ingrediente.findByIdAndDelete(req.params.id);
@@ -598,7 +694,7 @@ app.delete('/api/ingredientes/:id', async (req, res, next) => {
   }
 });
 
-// 10. Meal Preps
+// 10. Meal Preps (Con consulta individual)
 app.post('/api/meal_preps', async (req, res, next) => {
   try {
     const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
@@ -630,6 +726,18 @@ app.get('/api/meal_preps', async (req, res, next) => {
   }
 });
 
+app.get('/api/meal_preps/:id', async (req, res, next) => {
+  try {
+    const mealPrep = await MealPrep.findById(req.params.id).lean();
+    if (!mealPrep) {
+      return res.status(200).json(responseFormat(false, 'Plan de comidas no encontrado', null));
+    }
+    res.status(200).json(responseFormat(true, 'Plan de comidas obtenido exitosamente', mealPrep));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.delete('/api/meal_preps/:id', async (req, res, next) => {
   try {
     const mealPrepEliminado = await MealPrep.findByIdAndDelete(req.params.id);
@@ -642,7 +750,7 @@ app.delete('/api/meal_preps/:id', async (req, res, next) => {
   }
 });
 
-// 11. Notificaciones
+// 11. Notificaciones (Con consulta individual)
 app.post('/api/notificaciones', async (req, res, next) => {
   try {
     const { user_nombre, mensaje, tipo, leida } = req.body;
@@ -670,6 +778,18 @@ app.get('/api/notificaciones', async (req, res, next) => {
     }
     const notificaciones = await Notificacion.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Notificaciones obtenidas exitosamente', notificaciones));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/notificaciones/:id', async (req, res, next) => {
+  try {
+    const notificacion = await Notificacion.findById(req.params.id).lean();
+    if (!notificacion) {
+      return res.status(200).json(responseFormat(false, 'Notificación no encontrada', null));
+    }
+    res.status(200).json(responseFormat(true, 'Notificación obtenida exitosamente', notificacion));
   } catch (error) {
     next(error);
   }
