@@ -485,7 +485,7 @@ paths:
       tags:
         - Inventario
       operationId: addInventoryItem
-      summary: Agregar alimento validando usuario y producto en tiempo real
+      summary: Agregar alimento validando usuario y producto en tiempo real (con acumulación inteligente)
       requestBody:
         required: true
         content:
@@ -494,7 +494,7 @@ paths:
               $ref: '#/components/schemas/InventarioInput'
       responses:
         "200":
-          description: Agregado exitosamente
+          description: Agregado o actualizado exitosamente
           content:
             application/json:
               schema:
@@ -574,7 +574,7 @@ paths:
       parameters:
         - name: itemId
           in: path
-          required:
+          required: true
           schema:
             type: string
       responses:
