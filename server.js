@@ -174,7 +174,7 @@ app.delete('/api/usuarios/:id', async (req, res, next) => {
   }
 });
 
-// 2. Categorías
+// 2. Categorías (Con restricción: No eliminar si tiene productos asociados)
 app.post('/api/categorias', async (req, res, next) => {
   try {
     const nuevaCategoria = new Categoria(req.body);
@@ -194,7 +194,25 @@ app.get('/api/categorias', async (req, res, next) => {
   }
 });
 
-// 3. Marcas
+app.delete('/api/categorias/:id', async (req, res, next) => {
+  try {
+    const categoriaId = req.params.id;
+    const productoUsandoCategoria = await Producto.exists({ categoria_nombre: categoriaId });
+    if (productoUsandoCategoria) {
+      return res.status(200).json(responseFormat(false, 'Restricción de integridad: No se puede eliminar la categoría porque tiene productos asociados.', null));
+    }
+
+    const categoriaEliminada = await Categoria.findByIdAndDelete(categoriaId);
+    if (!categoriaEliminada) {
+      return res.status(200).json(responseFormat(false, 'Categoría no encontrada', null));
+    }
+    res.status(200).json(responseFormat(true, 'Categoría eliminada exitosamente', categoriaEliminada));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 3. Marcas (Con restricción: No eliminar si tiene productos asociados)
 app.post('/api/marcas', async (req, res, next) => {
   try {
     const nuevaMarca = new Marca(req.body);
@@ -216,7 +234,13 @@ app.get('/api/marcas', async (req, res, next) => {
 
 app.delete('/api/marcas/:id', async (req, res, next) => {
   try {
-    const marcaEliminada = await Marca.findByIdAndDelete(req.params.id);
+    const marcaId = req.params.id;
+    const productoUsandoMarca = await Producto.exists({ marca_nombre: marcaId });
+    if (productoUsandoMarca) {
+      return res.status(200).json(responseFormat(false, 'Restricción de integridad: No se puede eliminar la marca porque tiene productos asociados.', null));
+    }
+
+    const marcaEliminada = await Marca.findByIdAndDelete(marcaId);
     if (!marcaEliminada) {
       return res.status(200).json(responseFormat(false, 'Marca no encontrada', null));
     }
@@ -226,7 +250,7 @@ app.delete('/api/marcas/:id', async (req, res, next) => {
   }
 });
 
-// 4. Unidades de Medida
+// 4. Unidades de Medida (Con restricción: No eliminar si está en el inventario)
 app.post('/api/unidades_medida', async (req, res, next) => {
   try {
     const nuevaUnidad = new UnidadMedida(req.body);
@@ -246,7 +270,25 @@ app.get('/api/unidades_medida', async (req, res, next) => {
   }
 });
 
-// 5. Productos
+app.delete('/api/unidades_medida/:id', async (req, res, next) => {
+  try {
+    const unidadId = req.params.id;
+    const inventarioUsandoUnidad = await Inventario.exists({ unidad_medida_nombre: unidadId });
+    if (inventarioUsandoUnidad) {
+      return res.status(200).json(responseFormat(false, 'Restricción de integridad: No se puede eliminar la unidad de medida porque está en uso en el inventario.', null));
+    }
+
+    const unidadEliminada = await UnidadMedida.findByIdAndDelete(unidadId);
+    if (!unidadEliminada) {
+      return res.status(200).json(responseFormat(false, 'Unidad de medida no encontrada', null));
+    }
+    res.status(200).json(responseFormat(true, 'Unidad de medida eliminada exitosamente', unidadEliminada));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// 5. Productos (Con restricción: No eliminar si está en el inventario)
 app.post('/api/productos', async (req, res, next) => {
   try {
     const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
@@ -286,7 +328,13 @@ app.get('/api/productos', async (req, res, next) => {
 
 app.delete('/api/productos/:id', async (req, res, next) => {
   try {
-    const productoEliminado = await Producto.findByIdAndDelete(req.params.id);
+    const productoId = req.params.id;
+    const inventarioUsandoProducto = await Inventario.exists({ producto_id: productoId });
+    if (inventarioUsandoProducto) {
+      return res.status(200).json(responseFormat(false, 'Restricción de integridad: No se puede eliminar el producto porque tiene registros activos en el inventario.', null));
+    }
+
+    const productoEliminado = await Producto.findByIdAndDelete(productoId);
     if (!productoEliminado) {
       return res.status(200).json(responseFormat(false, 'Producto no encontrado', null));
     }
@@ -467,7 +515,7 @@ app.get('/api/patrones_predictivos', async (req, res, next) => {
   }
 });
 
-// 9. Ingredientes
+// 9. Ingredientes (Con restricción: No eliminar si está en un Meal Prep)
 app.post('/api/ingredientes', async (req, res, next) => {
   try {
     const nuevoIngrediente = new Ingrediente(req.body);
@@ -489,7 +537,13 @@ app.get('/api/ingredientes', async (req, res, next) => {
 
 app.delete('/api/ingredientes/:id', async (req, res, next) => {
   try {
-    const ingredienteEliminado = await Ingrediente.findByIdAndDelete(req.params.id);
+    const ingredienteId = req.params.id;
+    const mealPrepUsandoIngrediente = await MealPrep.exists({ ingrediente_nombre: ingredienteId });
+    if (mealPrepUsandoIngrediente) {
+      return res.status(200).json(responseFormat(false, 'Restricción de integridad: No se puede eliminar el ingrediente porque está siendo utilizado en un plan de comidas (Meal Prep).', null));
+    }
+
+    const ingredienteEliminado = await Ingrediente.findByIdAndDelete(ingredienteId);
     if (!ingredienteEliminado) {
       return res.status(200).json(responseFormat(false, 'Ingrediente no encontrado', null));
     }
@@ -595,7 +649,6 @@ app.use((err, req, res, next) => {
   console.error("Error detectado:", err.message);
   const message = err.message || 'Error interno del servidor';
 
-  // Forzar siempre 200 OK con success: false para que el servidor responda correctamente al cliente
   res.status(200).json({
     success: false,
     message: message,
