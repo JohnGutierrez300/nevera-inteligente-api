@@ -1,11 +1,11 @@
 openapi: '3.0.0'
 info:
   title: Nevera Inteligente API
-  description: API RESTful con arquitectura en árbol jerárquico, claves naturales, aislamiento por usuario y notificaciones.
+  description: API RESTful con arquitectura en árbol jerárquico, claves naturales, aislamiento por usuario, restricciones de integridad y consultas individuales.
   version: '1.0.0'
 servers:
-  - url: https://nevera-inteligente-api.onrender.com
-    description: Servidor de producción en Render (Nube)
+- url: https://nevera-inteligente-api.onrender.com
+  description: Servidor de producción en Render (Nube)
 
 paths:
   # ==========================================
@@ -16,7 +16,7 @@ paths:
       tags:
         - Usuarios
       operationId: createUser
-      summary: Crear un nuevo usuario (Validando unicidad estricta)
+      summary: Crear un nuevo usuario (Validando unicidad y seguridad)
       requestBody:
         required: true
         content:
@@ -24,21 +24,17 @@ paths:
             schema:
               $ref: '#/components/schemas/UsuarioInput'
       responses:
-        "201":
-          description: Creado exitosamente
+        "200":
+          description: Resultado de la operación (exitoso o rechazo de negocio)
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Datos inválidos o usuario duplicado
-        "500":
-          description: Error del servidor
     get:
       tags:
         - Usuarios
       operationId: listUsers
-      summary: Listar usuarios
+      summary: Listar todos los usuarios
       responses:
         "200":
           description: Lista obtenida exitosamente
@@ -46,15 +42,31 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
 
   /api/usuarios/{id}:
+    get:
+      tags:
+        - Usuarios
+      operationId: getUserById
+      summary: Consultar un usuario de manera individual por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Usuario obtenido o mensaje de no encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
     delete:
       tags:
         - Usuarios
       operationId: deleteUser
-      summary: Eliminar un usuario por su ID
+      summary: Eliminar un usuario y sus datos conectados (conservando historial)
       parameters:
         - name: id
           in: path
@@ -68,10 +80,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "404":
-          description: Usuario no encontrado
-        "500":
-          description: Error del servidor
 
   # ==========================================
   # 2. MÓDULO DE CATEGORÍAS
@@ -89,16 +97,12 @@ paths:
             schema:
               $ref: '#/components/schemas/CategoriaInput'
       responses:
-        "201":
+        "200":
           description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Datos inválidos
-        "500":
-          description: Error del servidor
     get:
       tags:
         - Categorías
@@ -111,8 +115,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
+
+  /api/categorias/{id}:
+    get:
+      tags:
+        - Categorías
+      operationId: getCategoryById
+      summary: Consultar una categoría individual por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Obtenida exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    delete:
+      tags:
+        - Categorías
+      operationId: deleteCategory
+      summary: Eliminar categoría (Bloqueada si tiene productos asociados)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Eliminada exitosamente o restricción aplicada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
 
   # ==========================================
   # 3. MÓDULO DE MARCAS
@@ -130,16 +170,12 @@ paths:
             schema:
               $ref: '#/components/schemas/MarcaInput'
       responses:
-        "201":
+        "200":
           description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Datos inválidos
-        "500":
-          description: Error del servidor
     get:
       tags:
         - Marcas
@@ -152,15 +188,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
 
   /api/marcas/{id}:
-    delete:
+    get:
       tags:
         - Marcas
-      operationId: deleteBrand
-      summary: Eliminar una marca por su ID
+      operationId: getBrandById
+      summary: Consultar una marca individual por su ID
       parameters:
         - name: id
           in: path
@@ -169,15 +203,29 @@ paths:
             type: string
       responses:
         "200":
-          description: Marca eliminada exitosamente
+          description: Obtenida exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "404":
-          description: Marca no encontrada
-        "500":
-          description: Error del servidor
+    delete:
+      tags:
+        - Marcas
+      operationId: deleteBrand
+      summary: Eliminar una marca (Bloqueada si tiene productos asociados)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Eliminada exitosamente o restricción aplicada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
 
   # ==========================================
   # 4. MÓDULO DE UNIDADES DE MEDIDA
@@ -195,16 +243,12 @@ paths:
             schema:
               $ref: '#/components/schemas/UnidadMedidaInput'
       responses:
-        "201":
+        "200":
           description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Datos inválidos
-        "500":
-          description: Error del servidor
     get:
       tags:
         - Unidades de Medida
@@ -217,8 +261,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
+
+  /api/unidades_medida/{id}:
+    get:
+      tags:
+        - Unidades de Medida
+      operationId: getUnitById
+      summary: Consultar una unidad de medida individual por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Obtenida exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+    delete:
+      tags:
+        - Unidades de Medida
+      operationId: deleteUnit
+      summary: Eliminar unidad (Bloqueada si está en uso en el inventario)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Eliminada exitosamente o restricción aplicada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
 
   # ==========================================
   # 5. MÓDULO DE INGREDIENTES
@@ -236,16 +316,12 @@ paths:
             schema:
               $ref: '#/components/schemas/IngredienteInput'
       responses:
-        "201":
+        "200":
           description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Datos inválidos
-        "500":
-          description: Error del servidor
     get:
       tags:
         - Ingredientes
@@ -258,15 +334,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
 
   /api/ingredientes/{id}:
-    delete:
+    get:
       tags:
         - Ingredientes
-      operationId: deleteIngredient
-      summary: Eliminar un ingrediente por su ID
+      operationId: getIngredientById
+      summary: Consultar un ingrediente individual por su ID
       parameters:
         - name: id
           in: path
@@ -275,15 +349,29 @@ paths:
             type: string
       responses:
         "200":
-          description: Ingrediente eliminado exitosamente
+          description: Obtenido exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "404":
-          description: Ingrediente no encontrado
-        "500":
-          description: Error del servidor
+    delete:
+      tags:
+        - Ingredientes
+      operationId: deleteIngredient
+      summary: Eliminar ingrediente (Bloqueado si está en un Meal Prep)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Eliminado exitosamente o restricción aplicada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
 
   # ==========================================
   # 6. MÓDULO DE PRODUCTOS
@@ -301,16 +389,12 @@ paths:
             schema:
               $ref: '#/components/schemas/ProductoInput'
       responses:
-        "201":
-          description: Creado exitosamente
+        "200":
+          description: Creado exitosamente o error de referencia
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Error en datos o llaves foráneas
-        "500":
-          description: Error del servidor
     get:
       tags:
         - Productos
@@ -323,15 +407,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
 
   /api/productos/{id}:
-    delete:
+    get:
       tags:
         - Productos
-      operationId: deleteProduct
-      summary: Eliminar un producto por su ID
+      operationId: getProductById
+      summary: Consultar un producto individual por su ID
       parameters:
         - name: id
           in: path
@@ -340,15 +422,29 @@ paths:
             type: string
       responses:
         "200":
-          description: Producto eliminado exitosamente
+          description: Obtenido exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "404":
-          description: Producto no encontrado
-        "500":
-          description: Error del servidor
+    delete:
+      tags:
+        - Productos
+      operationId: deleteProduct
+      summary: Eliminar producto (Bloqueado si está en el inventario)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Eliminado exitosamente o restricción aplicada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
 
   # ==========================================
   # 7. MÓDULO DE INVENTARIO
@@ -358,7 +454,7 @@ paths:
       tags:
         - Inventario
       operationId: addInventoryItem
-      summary: Agregar alimento físico a la nevera (Aislado por usuario y nevera)
+      summary: Agregar alimento físico a la nevera
       requestBody:
         required: true
         content:
@@ -366,16 +462,12 @@ paths:
             schema:
               $ref: '#/components/schemas/InventarioInput'
       responses:
-        "201":
-          description: Alimento agregado exitosamente
+        "200":
+          description: Agregado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Datos no válidos
-        "500":
-          description: Error del servidor
     get:
       tags:
         - Inventario
@@ -387,13 +479,11 @@ paths:
           required: false
           schema:
             type: string
-          description: Filtrar por nombre o ID del usuario dueño
         - name: nevera_id
           in: query
           required: false
           schema:
             type: string
-          description: Filtrar por ID de nevera específica
       responses:
         "200":
           description: Lista obtenida exitosamente
@@ -401,8 +491,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
 
   /api/inventario/{itemId}:
     get:
@@ -423,10 +511,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "404":
-          description: No encontrado
-        "500":
-          description: Error del servidor
     put:
       tags:
         - Inventario
@@ -451,12 +535,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Datos inválidos
-        "404":
-          description: No encontrado
-        "500":
-          description: Error del servidor
     delete:
       tags:
         - Inventario
@@ -475,10 +553,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "404":
-          description: No encontrado
-        "500":
-          description: Error del servidor
 
   # ==========================================
   # 8. MÓDULO DE HISTORIAL DE INVENTARIO
@@ -488,7 +562,7 @@ paths:
       tags:
         - Historial de Inventario
       operationId: listInventoryHistory
-      summary: Consultar la bitácora de cambios con respaldo de datos (snapshot)
+      summary: Consultar la bitácora de cambios con respaldo (snapshot)
       responses:
         "200":
           description: Historial obtenido exitosamente
@@ -496,8 +570,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
+
+  /api/historial_inventario/{id}:
+    get:
+      tags:
+        - Historial de Inventario
+      operationId: getHistoryById
+      summary: Consultar un registro individual del historial por ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Registro obtenido exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
 
   # ==========================================
   # 9. MÓDULO DE PATRONES PREDICTIVOS
@@ -515,16 +607,12 @@ paths:
             schema:
               $ref: '#/components/schemas/PatronPredictivoInput'
       responses:
-        "201":
+        "200":
           description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Datos no válidos
-        "500":
-          description: Error del servidor
     get:
       tags:
         - Patrones Predictivos
@@ -536,7 +624,6 @@ paths:
           required: false
           schema:
             type: string
-          description: Filtrar por usuario evaluado
       responses:
         "200":
           description: Obtenido exitosamente
@@ -544,8 +631,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
+
+  /api/patrones_predictivos/{id}:
+    get:
+      tags:
+        - Patrones Predictivos
+      operationId: getPredictivePatternById
+      summary: Consultar un patrón predictivo individual por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Obtenido exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
 
   # ==========================================
   # 10. MÓDULO DE PLANES DE COMIDA (MEAL PREPS)
@@ -555,7 +660,7 @@ paths:
       tags:
         - Planes de Comida (Meal Preps)
       operationId: createMealPrep
-      summary: Crear plan de comidas vinculado (Un solo plan por patrón predictivo)
+      summary: Crear plan de comidas vinculado
       requestBody:
         required: true
         content:
@@ -563,16 +668,12 @@ paths:
             schema:
               $ref: '#/components/schemas/MealPrepInput'
       responses:
-        "201":
+        "200":
           description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Datos no válidos o ID de patrón duplicado
-        "500":
-          description: Error del servidor
     get:
       tags:
         - Planes de Comida (Meal Preps)
@@ -585,10 +686,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
 
   /api/meal_preps/{id}:
+    get:
+      tags:
+        - Planes de Comida (Meal Preps)
+      operationId: getMealPrepById
+      summary: Consultar un plan de comida individual por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Obtenido exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
     delete:
       tags:
         - Planes de Comida (Meal Preps)
@@ -602,15 +719,11 @@ paths:
             type: string
       responses:
         "200":
-          description: Plan de comidas eliminado exitosamente
+          description: Eliminado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "404":
-          description: Plan de comidas no encontrado
-        "500":
-          description: Error del servidor
 
   # ==========================================
   # 11. MÓDULO DE NOTIFICACIONES
@@ -628,39 +741,50 @@ paths:
             schema:
               $ref: '#/components/schemas/NotificacionInput'
       responses:
-        "201":
-          description: Notificación creada exitosamente
+        "200":
+          description: Creado exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "400":
-          description: Datos no válidos
-        "500":
-          description: Error del servidor
     get:
       tags:
         - Notificaciones
       operationId: listNotifications
-      summary: Listar notificaciones (Filtrable individualmente por usuario)
+      summary: Listar notificaciones (Filtrable por usuario)
       parameters:
         - name: user_nombre
           in: query
           required: false
           schema:
             type: string
-          description: Filtrar por usuario dueño de las notificaciones
       responses:
         "200":
-          description: Notificaciones obtenidas exitosamente
+          description: Obtenidas exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "500":
-          description: Error del servidor
 
   /api/notificaciones/{id}:
+    get:
+      tags:
+        - Notificaciones
+      operationId: getNotificationById
+      summary: Consultar una notificación individual por su ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Obtenida exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
     delete:
       tags:
         - Notificaciones
@@ -674,15 +798,11 @@ paths:
             type: string
       responses:
         "200":
-          description: Notificación eliminada exitosamente
+          description: Eliminada exitosamente
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
-        "404":
-          description: Notificación no encontrada
-        "500":
-          description: Error del servidor
 
 components:
   schemas:
@@ -702,7 +822,7 @@ components:
       properties:
         id:
           type: string
-          description: Identificador único del usuario (PK)
+          description: Identificador único del usuario (Numérico)
         nombre:
           type: string
           description: Nombre del usuario (Único)
@@ -712,6 +832,7 @@ components:
           description: Correo electrónico (Único)
         password_hash:
           type: string
+          description: Contraseña segura (mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos)
 
     CategoriaInput:
       type: object
@@ -768,10 +889,10 @@ components:
           description: ID del usuario dueño (FK)
         nevera_id:
           type: string
-          description: Identificador de la nevera (Ej. NEVERA-PRINCIPAL, NEVERA-FINCA)
+          description: Identificador de la nevera
         producto_id:
           type: string
-          description: Código personalizado del producto (Ej. 101)
+          description: Código personalizado del producto (FK)
         unidad_medida_nombre:
           type: string
           description: Nombre de la unidad de medida (FK)
@@ -800,17 +921,15 @@ components:
           description: ID del usuario evaluado (FK)
         frecuencia_compra_dias:
           type: number
-          description: Frecuencia estimada de compra en días
         probabilidad_desperdicio:
           type: number
-          description: Índice de probabilidad de desperdicio
 
     MealPrepInput:
       type: object
       properties:
         patron_predictivo_id:
           type: string
-          description: Código del patrón predictivo (Ej. PAT-01)
+          description: Código del patrón predictivo (FK)
         ingrediente_nombre:
           type: string
           description: Nombre del ingrediente base (FK)
@@ -825,7 +944,6 @@ components:
           description: ID o nombre del usuario al que va dirigida la alerta (FK)
         mensaje:
           type: string
-          description: Texto descriptivo de la notificación
         tipo:
           type: string
           enum:
