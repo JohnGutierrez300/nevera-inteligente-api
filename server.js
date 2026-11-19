@@ -31,7 +31,110 @@ const responseFormat = (success, message, data = null) => ({
 });
 
 // ==========================================
-// MODELOS DE MONGOOSE (Con Hooks de Integridad)
+// INTEGRIDAD REFERENCIAL (Llaves foráneas)
+// ==========================================
+// Las relaciones se derivan automáticamente de la opción `ref` de cada esquema,
+// por lo que cualquier modelo nuevo con `ref` queda cubierto sin código adicional.
+
+const MSG_NO_ENCONTRADO = 'El recurso con el ID proporcionado no fue encontrado';
+const MSG_EN_USO = 'No se puede eliminar el recurso porque está siendo utilizado por otros registros';
+
+// Colecciones de auditoría: conservan snapshots aunque el registro original se elimine,
+// por eso no bloquean la eliminación.
+const MODELOS_SIN_RESTRICCION = new Set(['HistorialInventario']);
+
+class ApiError extends Error {
+  constructor(status, message, data = null) {
+    super(message);
+    this.status = status;
+    this.data = data;
+  }
+}
+
+// Verifica que el valor tenga el formato del _id del modelo (evita CastError e inyección de operadores)
+const idCompatible = (Model, id) => {
+  if (typeof id !== 'string' && typeof id !== 'number') return false;
+  const valor = String(id).trim();
+  if (valor === '') return false;
+  if (Model.schema.path('_id').instance === 'ObjectId') return /^[a-f\d]{24}$/i.test(valor);
+  return true;
+};
+
+// Campos de un modelo que apuntan a otra colección: [{ campo, modeloRef }]
+const camposReferencia = (Model) => {
+  const campos = [];
+  Model.schema.eachPath((ruta, tipo) => {
+    if (ruta !== '_id' && tipo.options && tipo.options.ref) {
+      campos.push({ campo: ruta, modeloRef: tipo.options.ref });
+    }
+  });
+  return campos;
+};
+
+// Busca un documento por su _id en tiempo real; si no existe responde 404
+const obtenerOFallar = async (Model, id) => {
+  const doc = idCompatible(Model, id) ? await Model.findById(id).lean() : null;
+  if (!doc) {
+    throw new ApiError(404, MSG_NO_ENCONTRADO, { recurso: Model.modelName, id });
+  }
+  return doc;
+};
+
+// Valida en tiempo real que cada ID foráneo recibido (body o query) exista en su colección
+const validarReferencias = async (Model, datos = {}) => {
+  for (const { campo, modeloRef } of camposReferencia(Model)) {
+    const valor = datos[campo];
+    if (valor === undefined || valor === null || valor === '') continue; // `required` lo valida Mongoose
+    const ModeloRef = mongoose.model(modeloRef);
+    const existe = idCompatible(ModeloRef, valor) && await ModeloRef.exists({ _id: valor });
+    if (!existe) {
+      throw new ApiError(404, MSG_NO_ENCONTRADO, { campo, valor, recurso: modeloRef });
+    }
+  }
+};
+
+// Busca en todas las colecciones los registros que referencian al _id; si hay alguno responde 409
+const verificarSinReferencias = async (Model, id) => {
+  const dependencias = [];
+  for (const nombre of mongoose.modelNames()) {
+    if (MODELOS_SIN_RESTRICCION.has(nombre)) continue;
+    const Dependiente = mongoose.model(nombre);
+    for (const { campo, modeloRef } of camposReferencia(Dependiente)) {
+      if (modeloRef !== Model.modelName) continue;
+      const registros = await Dependiente.countDocuments({ [campo]: id });
+      if (registros > 0) {
+        dependencias.push({ coleccion: Dependiente.collection.collectionName, campo, registros });
+      }
+    }
+  }
+  if (dependencias.length > 0) {
+    throw new ApiError(409, MSG_EN_USO, { recurso: Model.modelName, id, dependencias });
+  }
+};
+
+// Plugin global: protege toda eliminación por _id a nivel de modelo (no solo desde las rutas).
+// Debe registrarse antes de compilar los modelos.
+mongoose.plugin((schema) => {
+  schema.pre(['findOneAndDelete', 'deleteOne'], { document: false, query: true }, async function () {
+    const id = this.getFilter()._id;
+    if (id !== undefined && id !== null && typeof id !== 'object') {
+      await verificarSinReferencias(this.model, id);
+    }
+  });
+  schema.pre('deleteMany', async function () {
+    const ids = await this.model.find(this.getFilter()).distinct('_id');
+    for (const id of ids) await verificarSinReferencias(this.model, id);
+  });
+});
+
+// Elimina por _id: 404 si no existe, 409 (vía plugin) si está referenciado
+const eliminarPorId = async (Model, id) => {
+  await obtenerOFallar(Model, id);
+  return Model.findByIdAndDelete(id);
+};
+
+// ==========================================
+// MODELOS DE MONGOOSE
 // ==========================================
 
 const Usuario = mongoose.model('Usuario', new mongoose.Schema({
@@ -41,81 +144,25 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   password_hash: { type: String, required: true }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
 
-const categoriaSchema = new mongoose.Schema({
+const Categoria = mongoose.model('Categoria', new mongoose.Schema({
   _id: { type: String, required: true }
-}, { collection: 'categorias', _id: false, versionKey: false });
+}, { collection: 'categorias', _id: false, versionKey: false }));
 
-categoriaSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function (next) {
-  const query = this.getFilter();
-  const categoriaId = query._id || query.id;
-  if (categoriaId) {
-    const productoUsando = await mongoose.model('Producto').exists({ categoria_nombre: categoriaId });
-    if (productoUsando) {
-      return next(new Error('Restricción de integridad: No se puede eliminar la categoría porque tiene productos asociados.'));
-    }
-  }
-  next();
-});
-
-const Categoria = mongoose.model('Categoria', categoriaSchema);
-
-const unidadMedidaSchema = new mongoose.Schema({
+const UnidadMedida = mongoose.model('UnidadMedida', new mongoose.Schema({
   _id: { type: String, required: true },
   abreviatura: { type: String, required: true }
-}, { collection: 'unidades_medida', _id: false, versionKey: false });
+}, { collection: 'unidades_medida', _id: false, versionKey: false }));
 
-unidadMedidaSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function (next) {
-  const query = this.getFilter();
-  const unidadId = query._id || query.id;
-  if (unidadId) {
-    const inventarioUsando = await mongoose.model('Inventario').exists({ unidad_medida_nombre: unidadId });
-    if (inventarioUsando) {
-      return next(new Error('Restricción de integridad: No se puede eliminar la unidad de medida porque está en uso en el inventario.'));
-    }
-  }
-  next();
-});
-
-const UnidadMedida = mongoose.model('UnidadMedida', unidadMedidaSchema);
-
-const marcaSchema = new mongoose.Schema({
+const Marca = mongoose.model('Marca', new mongoose.Schema({
   _id: { type: String, required: true }
-}, { collection: 'marcas', _id: false, versionKey: false });
+}, { collection: 'marcas', _id: false, versionKey: false }));
 
-marcaSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function (next) {
-  const query = this.getFilter();
-  const marcaId = query._id || query.id;
-  if (marcaId) {
-    const productoUsando = await mongoose.model('Producto').exists({ marca_nombre: marcaId });
-    if (productoUsando) {
-      return next(new Error('Restricción de integridad: No se puede eliminar la marca porque tiene productos asociados.'));
-    }
-  }
-  next();
-});
-
-const Marca = mongoose.model('Marca', marcaSchema);
-
-const productoSchema = new mongoose.Schema({
+const Producto = mongoose.model('Producto', new mongoose.Schema({
   _id: { type: String, required: true },
   marca_nombre: { type: String, ref: 'Marca', required: true },
   categoria_nombre: { type: String, ref: 'Categoria', required: true },
   nombre: { type: String, required: true }
-}, { collection: 'productos', _id: false, versionKey: false });
-
-productoSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function (next) {
-  const query = this.getFilter();
-  const productoId = query._id || query.id;
-  if (productoId) {
-    const inventarioUsando = await mongoose.model('Inventario').exists({ producto_id: productoId });
-    if (inventarioUsando) {
-      return next(new Error('Restricción de integridad: No se puede eliminar el producto porque tiene registros en el inventario.'));
-    }
-  }
-  next();
-});
-
-const Producto = mongoose.model('Producto', productoSchema);
+}, { collection: 'productos', _id: false, versionKey: false }));
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
@@ -142,23 +189,9 @@ const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema(
   probabilidad_desperdicio: { type: Number }
 }, { collection: 'patrones_predictivos', _id: false, versionKey: false }));
 
-const ingredienteSchema = new mongoose.Schema({
+const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
   _id: { type: String, required: true }
-}, { collection: 'ingredientes', _id: false, versionKey: false });
-
-ingredienteSchema.pre(['deleteOne', 'findOneAndDelete', 'deleteMany'], async function (next) {
-  const query = this.getFilter();
-  const ingredienteId = query._id || query.id;
-  if (ingredienteId) {
-    const mealPrepUsando = await mongoose.model('MealPrep').exists({ ingrediente_nombre: ingredienteId });
-    if (mealPrepUsando) {
-      return next(new Error('Restricción de integridad: No se puede eliminar el ingrediente porque está en uso en un plan de comidas (Meal Prep).'));
-    }
-  }
-  next();
-});
-
-const Ingrediente = mongoose.model('Ingrediente', ingredienteSchema);
+}, { collection: 'ingredientes', _id: false, versionKey: false }));
 
 const mealPrepSchema = new mongoose.Schema({
   patron_predictivo_id: { type: String, ref: 'PatronPredictivo', required: true, unique: true },
@@ -237,10 +270,7 @@ app.get('/api/usuarios', async (req, res, next) => {
 
 app.get('/api/usuarios/:id', async (req, res, next) => {
   try {
-    const usuario = await Usuario.findById(req.params.id).lean();
-    if (!usuario) {
-      return res.status(200).json(responseFormat(false, 'Usuario no encontrado', null));
-    }
+    const usuario = await obtenerOFallar(Usuario, req.params.id);
     res.status(200).json(responseFormat(true, 'Usuario obtenido exitosamente', usuario));
   } catch (error) {
     next(error);
@@ -252,10 +282,7 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
     const usuarioId = req.params.id;
     const { nombre, email, password_hash } = req.body;
 
-    const usuarioExistente = await Usuario.findById(usuarioId);
-    if (!usuarioExistente) {
-      return res.status(200).json(responseFormat(false, 'Usuario no encontrado para actualizar', null));
-    }
+    await obtenerOFallar(Usuario, usuarioId);
 
     if (nombre || email) {
       const conflicto = await Usuario.findOne({
@@ -289,24 +316,11 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
   }
 });
 
-// ELIMINACIÓN EN CASCADA (Borra todo lo del usuario EXCEPTO el historial)
+// Eliminación restringida: bloqueada (409) si el usuario tiene inventario, patrones o notificaciones
 app.delete('/api/usuarios/:id', async (req, res, next) => {
   try {
-    const usuarioId = req.params.id;
-    const usuarioEliminado = await Usuario.findByIdAndDelete(usuarioId);
-    if (!usuarioEliminado) {
-      return res.status(200).json(responseFormat(false, 'Usuario no encontrado en la base de datos', null));
-    }
-
-    const patronesUsuario = await PatronPredictivo.find({ user_nombre: usuarioId }).lean();
-    const patronIds = patronesUsuario.map(p => p._id);
-
-    await MealPrep.deleteMany({ patron_predictivo_id: { $in: patronIds } });
-    await PatronPredictivo.deleteMany({ user_nombre: usuarioId });
-    await Inventario.deleteMany({ user_nombre: usuarioId });
-    await Notificacion.deleteMany({ user_nombre: usuarioId });
-
-    res.status(200).json(responseFormat(true, 'Usuario y sus datos dependientes eliminados en cascada exitosamente (Historial conservado)', usuarioEliminado));
+    const usuarioEliminado = await eliminarPorId(Usuario, req.params.id);
+    res.status(200).json(responseFormat(true, 'Usuario eliminado exitosamente', usuarioEliminado));
   } catch (error) {
     next(error);
   }
@@ -334,10 +348,7 @@ app.get('/api/categorias', async (req, res, next) => {
 
 app.get('/api/categorias/:id', async (req, res, next) => {
   try {
-    const categoria = await Categoria.findById(req.params.id).lean();
-    if (!categoria) {
-      return res.status(200).json(responseFormat(false, 'Categoría no encontrada', null));
-    }
+    const categoria = await obtenerOFallar(Categoria, req.params.id);
     res.status(200).json(responseFormat(true, 'Categoría obtenida exitosamente', categoria));
   } catch (error) {
     next(error);
@@ -346,10 +357,7 @@ app.get('/api/categorias/:id', async (req, res, next) => {
 
 app.delete('/api/categorias/:id', async (req, res, next) => {
   try {
-    const categoriaEliminada = await Categoria.findByIdAndDelete(req.params.id);
-    if (!categoriaEliminada) {
-      return res.status(200).json(responseFormat(false, 'Categoría no encontrada', null));
-    }
+    const categoriaEliminada = await eliminarPorId(Categoria, req.params.id);
     res.status(200).json(responseFormat(true, 'Categoría eliminada exitosamente', categoriaEliminada));
   } catch (error) {
     next(error);
@@ -378,10 +386,7 @@ app.get('/api/marcas', async (req, res, next) => {
 
 app.get('/api/marcas/:id', async (req, res, next) => {
   try {
-    const marca = await Marca.findById(req.params.id).lean();
-    if (!marca) {
-      return res.status(200).json(responseFormat(false, 'Marca no encontrada', null));
-    }
+    const marca = await obtenerOFallar(Marca, req.params.id);
     res.status(200).json(responseFormat(true, 'Marca obtenida exitosamente', marca));
   } catch (error) {
     next(error);
@@ -390,10 +395,7 @@ app.get('/api/marcas/:id', async (req, res, next) => {
 
 app.delete('/api/marcas/:id', async (req, res, next) => {
   try {
-    const marcaEliminada = await Marca.findByIdAndDelete(req.params.id);
-    if (!marcaEliminada) {
-      return res.status(200).json(responseFormat(false, 'Marca no encontrada', null));
-    }
+    const marcaEliminada = await eliminarPorId(Marca, req.params.id);
     res.status(200).json(responseFormat(true, 'Marca eliminada exitosamente', marcaEliminada));
   } catch (error) {
     next(error);
@@ -422,10 +424,7 @@ app.get('/api/unidades_medida', async (req, res, next) => {
 
 app.get('/api/unidades_medida/:id', async (req, res, next) => {
   try {
-    const unidad = await UnidadMedida.findById(req.params.id).lean();
-    if (!unidad) {
-      return res.status(200).json(responseFormat(false, 'Unidad de medida no encontrada', null));
-    }
+    const unidad = await obtenerOFallar(UnidadMedida, req.params.id);
     res.status(200).json(responseFormat(true, 'Unidad de medida obtenida exitosamente', unidad));
   } catch (error) {
     next(error);
@@ -434,10 +433,7 @@ app.get('/api/unidades_medida/:id', async (req, res, next) => {
 
 app.delete('/api/unidades_medida/:id', async (req, res, next) => {
   try {
-    const unidadEliminada = await UnidadMedida.findByIdAndDelete(req.params.id);
-    if (!unidadEliminada) {
-      return res.status(200).json(responseFormat(false, 'Unidad de medida no encontrada', null));
-    }
+    const unidadEliminada = await eliminarPorId(UnidadMedida, req.params.id);
     res.status(200).json(responseFormat(true, 'Unidad de medida eliminada exitosamente', unidadEliminada));
   } catch (error) {
     next(error);
@@ -448,14 +444,7 @@ app.delete('/api/unidades_medida/:id', async (req, res, next) => {
 app.post('/api/productos', async (req, res, next) => {
   try {
     const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
-    const marcaExiste = await Marca.findById(marca_nombre);
-    if (!marcaExiste) {
-      return res.status(200).json(responseFormat(false, `La marca '${marca_nombre}' no existe. Debe crearla primero.`, null));
-    }
-    const categoriaExiste = await Categoria.findById(categoria_nombre);
-    if (!categoriaExiste) {
-      return res.status(200).json(responseFormat(false, `La categoría '${categoria_nombre}' no existe. Debe crearla primero.`, null));
-    }
+    await validarReferencias(Producto, { marca_nombre, categoria_nombre });
     const nuevoProducto = new Producto({ _id, marca_nombre, categoria_nombre, nombre });
     await nuevoProducto.save();
     res.status(200).json(responseFormat(true, 'Producto creado exitosamente', nuevoProducto));
@@ -484,10 +473,7 @@ app.get('/api/productos', async (req, res, next) => {
 
 app.get('/api/productos/:id', async (req, res, next) => {
   try {
-    let producto = await Producto.findById(req.params.id).lean();
-    if (!producto) {
-      return res.status(200).json(responseFormat(false, 'Producto no encontrado', null));
-    }
+    const producto = await obtenerOFallar(Producto, req.params.id);
     const marca = await Marca.findById(producto.marca_nombre).lean();
     const categoria = await Categoria.findById(producto.categoria_nombre).lean();
     producto.marca_nombre = marca || producto.marca_nombre;
@@ -500,10 +486,7 @@ app.get('/api/productos/:id', async (req, res, next) => {
 
 app.delete('/api/productos/:id', async (req, res, next) => {
   try {
-    const productoEliminado = await Producto.findByIdAndDelete(req.params.id);
-    if (!productoEliminado) {
-      return res.status(200).json(responseFormat(false, 'Producto no encontrado', null));
-    }
+    const productoEliminado = await eliminarPorId(Producto, req.params.id);
     res.status(200).json(responseFormat(true, 'Producto eliminado exitosamente', productoEliminado));
   } catch (error) {
     next(error);
@@ -515,18 +498,7 @@ app.post('/api/inventario', async (req, res, next) => {
   try {
     const { user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado } = req.body;
 
-    const usuarioExiste = await Usuario.findById(user_nombre);
-    if (!usuarioExiste) {
-      return res.status(200).json(responseFormat(false, `El usuario '${user_nombre}' no se encuentra registrado.`, null));
-    }
-    const productoExiste = await Producto.findById(producto_id);
-    if (!productoExiste) {
-      return res.status(200).json(responseFormat(false, `El producto '${producto_id}' no se encuentra registrado.`, null));
-    }
-    const unidadExiste = await UnidadMedida.findById(unidad_medida_nombre);
-    if (!unidadExiste) {
-      return res.status(200).json(responseFormat(false, `La unidad de medida '${unidad_medida_nombre}' no se encuentra registrada.`, null));
-    }
+    await validarReferencias(Inventario, { user_nombre, producto_id, unidad_medida_nombre });
 
     let itemInventario = await Inventario.findOne({
       user_nombre,
@@ -571,6 +543,8 @@ app.get('/api/inventario', async (req, res, next) => {
     if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
     if (req.query.nevera_id) filtro.nevera_id = req.query.nevera_id;
 
+    await validarReferencias(Inventario, filtro);
+
     const inventarios = await Inventario.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Lista de inventario obtenida', inventarios));
   } catch (error) {
@@ -580,10 +554,7 @@ app.get('/api/inventario', async (req, res, next) => {
 
 app.get('/api/inventario/:itemId', async (req, res, next) => {
   try {
-    const item = await Inventario.findById(req.params.itemId).lean();
-    if (!item) {
-      return res.status(200).json(responseFormat(false, 'Alimento no encontrado', null));
-    }
+    const item = await obtenerOFallar(Inventario, req.params.itemId);
     res.status(200).json(responseFormat(true, 'Detalle del alimento obtenido', item));
   } catch (error) {
     next(error);
@@ -592,10 +563,12 @@ app.get('/api/inventario/:itemId', async (req, res, next) => {
 
 app.put('/api/inventario/:itemId', async (req, res, next) => {
   try {
-    const itemActualizado = await Inventario.findByIdAndUpdate(req.params.itemId, req.body, { new: true });
-    if (!itemActualizado) {
-      return res.status(200).json(responseFormat(false, 'Alimento no encontrado', null));
-    }
+    const { _id, ...cambios } = req.body;
+
+    await obtenerOFallar(Inventario, req.params.itemId);
+    await validarReferencias(Inventario, cambios);
+
+    const itemActualizado = await Inventario.findByIdAndUpdate(req.params.itemId, cambios, { new: true, runValidators: true });
 
     await HistorialInventario.create({
       inventario_id: itemActualizado._id,
@@ -612,10 +585,7 @@ app.put('/api/inventario/:itemId', async (req, res, next) => {
 
 app.delete('/api/inventario/:itemId', async (req, res, next) => {
   try {
-    const itemEliminado = await Inventario.findByIdAndDelete(req.params.itemId);
-    if (!itemEliminado) {
-      return res.status(200).json(responseFormat(false, 'Alimento no encontrado', null));
-    }
+    const itemEliminado = await eliminarPorId(Inventario, req.params.itemId);
 
     await HistorialInventario.create({
       inventario_id: itemEliminado._id,
@@ -642,10 +612,7 @@ app.get('/api/historial_inventario', async (req, res, next) => {
 
 app.get('/api/historial_inventario/:id', async (req, res, next) => {
   try {
-    const registro = await HistorialInventario.findById(req.params.id).lean();
-    if (!registro) {
-      return res.status(200).json(responseFormat(false, 'Registro de historial no encontrado', null));
-    }
+    const registro = await obtenerOFallar(HistorialInventario, req.params.id);
     res.status(200).json(responseFormat(true, 'Registro de historial obtenido', registro));
   } catch (error) {
     next(error);
@@ -656,10 +623,7 @@ app.get('/api/historial_inventario/:id', async (req, res, next) => {
 app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const { _id, user_nombre, frecuencia_compra_dias, probabilidad_desperdicio } = req.body;
-    const usuarioExiste = await Usuario.findById(user_nombre);
-    if (!usuarioExiste) {
-      return res.status(200).json(responseFormat(false, `El usuario '${user_nombre}' no existe. Debe crearlo primero.`, null));
-    }
+    await validarReferencias(PatronPredictivo, { user_nombre });
     const nuevoPatron = new PatronPredictivo({ _id, user_nombre, frecuencia_compra_dias, probabilidad_desperdicio });
     await nuevoPatron.save();
     res.status(200).json(responseFormat(true, 'Patrón predictivo creado exitosamente', nuevoPatron));
@@ -672,6 +636,7 @@ app.get('/api/patrones_predictivos', async (req, res, next) => {
   try {
     const filtro = {};
     if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
+    await validarReferencias(PatronPredictivo, filtro);
     const patrones = await PatronPredictivo.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Patrones predictivos obtenidos', patrones));
   } catch (error) {
@@ -681,10 +646,7 @@ app.get('/api/patrones_predictivos', async (req, res, next) => {
 
 app.get('/api/patrones_predictivos/:id', async (req, res, next) => {
   try {
-    const patron = await PatronPredictivo.findById(req.params.id).lean();
-    if (!patron) {
-      return res.status(200).json(responseFormat(false, 'Patrón predictivo no encontrado', null));
-    }
+    const patron = await obtenerOFallar(PatronPredictivo, req.params.id);
     res.status(200).json(responseFormat(true, 'Patrón predictivo obtenido', patron));
   } catch (error) {
     next(error);
@@ -713,10 +675,7 @@ app.get('/api/ingredientes', async (req, res, next) => {
 
 app.get('/api/ingredientes/:id', async (req, res, next) => {
   try {
-    const ingrediente = await Ingrediente.findById(req.params.id).lean();
-    if (!ingrediente) {
-      return res.status(200).json(responseFormat(false, 'Ingrediente no encontrado', null));
-    }
+    const ingrediente = await obtenerOFallar(Ingrediente, req.params.id);
     res.status(200).json(responseFormat(true, 'Ingrediente obtenido exitosamente', ingrediente));
   } catch (error) {
     next(error);
@@ -725,10 +684,7 @@ app.get('/api/ingredientes/:id', async (req, res, next) => {
 
 app.delete('/api/ingredientes/:id', async (req, res, next) => {
   try {
-    const ingredienteEliminado = await Ingrediente.findByIdAndDelete(req.params.id);
-    if (!ingredienteEliminado) {
-      return res.status(200).json(responseFormat(false, 'Ingrediente no encontrado', null));
-    }
+    const ingredienteEliminado = await eliminarPorId(Ingrediente, req.params.id);
     res.status(200).json(responseFormat(true, 'Ingrediente eliminado exitosamente', ingredienteEliminado));
   } catch (error) {
     next(error);
@@ -739,14 +695,7 @@ app.delete('/api/ingredientes/:id', async (req, res, next) => {
 app.post('/api/meal_preps', async (req, res, next) => {
   try {
     const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
-    const patronExiste = await PatronPredictivo.findById(patron_predictivo_id);
-    if (!patronExiste) {
-      return res.status(200).json(responseFormat(false, `El patrón predictivo '${patron_predictivo_id}' no existe. Debe crearlo primero.`, null));
-    }
-    const ingredienteExiste = await Ingrediente.findById(ingrediente_nombre);
-    if (!ingredienteExiste) {
-      return res.status(200).json(responseFormat(false, `El ingrediente '${ingrediente_nombre}' no existe. Debe crearlo primero.`, null));
-    }
+    await validarReferencias(MealPrep, { patron_predictivo_id, ingrediente_nombre });
     const nuevoMealPrep = new MealPrep({ patron_predictivo_id, ingrediente_nombre, nombre_receta });
     await nuevoMealPrep.save();
     res.status(200).json(responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep));
@@ -769,10 +718,7 @@ app.get('/api/meal_preps', async (req, res, next) => {
 
 app.get('/api/meal_preps/:id', async (req, res, next) => {
   try {
-    const mealPrep = await MealPrep.findById(req.params.id).lean();
-    if (!mealPrep) {
-      return res.status(200).json(responseFormat(false, 'Plan no encontrado', null));
-    }
+    const mealPrep = await obtenerOFallar(MealPrep, req.params.id);
     res.status(200).json(responseFormat(true, 'Plan obtenido', mealPrep));
   } catch (error) {
     next(error);
@@ -781,10 +727,7 @@ app.get('/api/meal_preps/:id', async (req, res, next) => {
 
 app.delete('/api/meal_preps/:id', async (req, res, next) => {
   try {
-    const mealPrepEliminado = await MealPrep.findByIdAndDelete(req.params.id);
-    if (!mealPrepEliminado) {
-      return res.status(200).json(responseFormat(false, 'Plan no encontrado', null));
-    }
+    const mealPrepEliminado = await eliminarPorId(MealPrep, req.params.id);
     res.status(200).json(responseFormat(true, 'Plan eliminado exitosamente', mealPrepEliminado));
   } catch (error) {
     next(error);
@@ -795,10 +738,7 @@ app.delete('/api/meal_preps/:id', async (req, res, next) => {
 app.post('/api/notificaciones', async (req, res, next) => {
   try {
     const { user_nombre, mensaje, tipo, leida } = req.body;
-    const usuarioExiste = await Usuario.findById(user_nombre);
-    if (!usuarioExiste) {
-      return res.status(200).json(responseFormat(false, `El usuario '${user_nombre}' no existe. Debe crearlo primero.`, null));
-    }
+    await validarReferencias(Notificacion, { user_nombre });
     const nuevaNoti = new Notificacion({ user_nombre, mensaje, tipo, leida });
     await nuevaNoti.save();
     res.status(200).json(responseFormat(true, 'Notificación creada exitosamente', nuevaNoti));
@@ -811,6 +751,7 @@ app.get('/api/notificaciones', async (req, res, next) => {
   try {
     const filtro = {};
     if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
+    await validarReferencias(Notificacion, filtro);
     const notificaciones = await Notificacion.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Notificaciones obtenidas', notificaciones));
   } catch (error) {
@@ -820,10 +761,7 @@ app.get('/api/notificaciones', async (req, res, next) => {
 
 app.get('/api/notificaciones/:id', async (req, res, next) => {
   try {
-    const notificacion = await Notificacion.findById(req.params.id).lean();
-    if (!notificacion) {
-      return res.status(200).json(responseFormat(false, 'Notificación no encontrada', null));
-    }
+    const notificacion = await obtenerOFallar(Notificacion, req.params.id);
     res.status(200).json(responseFormat(true, 'Notificación obtenida', notificacion));
   } catch (error) {
     next(error);
@@ -832,10 +770,7 @@ app.get('/api/notificaciones/:id', async (req, res, next) => {
 
 app.delete('/api/notificaciones/:id', async (req, res, next) => {
   try {
-    const notiEliminada = await Notificacion.findByIdAndDelete(req.params.id);
-    if (!notiEliminada) {
-      return res.status(200).json(responseFormat(false, 'Notificación no encontrada', null));
-    }
+    const notiEliminada = await eliminarPorId(Notificacion, req.params.id);
     res.status(200).json(responseFormat(true, 'Notificación eliminada', notiEliminada));
   } catch (error) {
     next(error);
@@ -847,10 +782,12 @@ app.delete('/api/notificaciones/:id', async (req, res, next) => {
 // ==========================================
 app.use((err, req, res, next) => {
   console.error("Error detectado:", err.message);
-  res.status(200).json({
+  // 404 (ID no encontrado) y 409 (eliminación bloqueada) llevan su código; el resto conserva el formato previo
+  const status = err instanceof ApiError ? err.status : 200;
+  res.status(status).json({
     success: false,
     message: err.message || 'Error interno del servidor',
-    data: null
+    data: err instanceof ApiError ? err.data : null
   });
 });
 
