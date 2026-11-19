@@ -1,11 +1,11 @@
 openapi: '3.0.0'
 info:
   title: Nevera Inteligente API
-  description: API RESTful con arquitectura jerárquica, validaciones en tiempo real y respuestas unificadas.
+  description: API RESTful con arquitectura jerárquica, validaciones en tiempo real, restricciones de integridad y respuestas unificadas.
   version: '1.0.0'
 servers:
-- url: https://nevera-inteligente-api.onrender.com
-  description: Servidor de producción en Render (Nube)
+  - url: https://nevera-inteligente-api.onrender.com
+    description: Servidor de producción en Render (Nube)
 
 paths:
   # ==========================================
@@ -16,7 +16,7 @@ paths:
       tags:
         - Usuarios
       operationId: createUser
-      summary: Crear un nuevo usuario (Valida unicidad y existencia en tiempo real)
+      summary: Crear un nuevo usuario (Valida unicidad, ID numérico y contraseña segura)
       requestBody:
         required: true
         content:
@@ -34,17 +34,17 @@ paths:
       tags:
         - Usuarios
       operationId: listUsers
-      summary: Listar o buscar usuarios en tiempo real por nombre o correo
+      summary: Listar o filtrar usuarios por ID, nombre o correo
       parameters:
         - name: busqueda
           in: query
           required: false
           schema:
             type: string
-          description: Texto para filtrar usuarios en tiempo real
+          description: Texto para filtrar usuarios por ID, nombre o correo (devuelve aviso si no hay coincidencias)
       responses:
         "200":
-          description: Lista obtenida exitosamente
+          description: Lista obtenida o mensaje de sin coincidencias
           content:
             application/json:
               schema:
@@ -55,7 +55,7 @@ paths:
       tags:
         - Usuarios
       operationId: getUserById
-      summary: Consultar un usuario individual por su ID (Validación en tiempo real)
+      summary: Consultar un usuario individual por su ID
       parameters:
         - name: id
           in: path
@@ -64,7 +64,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Usuario encontrado o mensaje de error
+          description: Usuario encontrado o mensaje de no encontrado
           content:
             application/json:
               schema:
@@ -73,7 +73,7 @@ paths:
       tags:
         - Usuarios
       operationId: updateUser
-      summary: Actualizar un usuario validando duplicados en tiempo real
+      summary: Actualizar un usuario (Nombre, correo o contraseña con validación de seguridad)
       parameters:
         - name: id
           in: path
@@ -88,7 +88,7 @@ paths:
               $ref: '#/components/schemas/UsuarioInput'
       responses:
         "200":
-          description: Actualizado exitosamente
+          description: Actualizado exitosamente o rechazo por seguridad/duplicidad
           content:
             application/json:
               schema:
@@ -97,7 +97,7 @@ paths:
       tags:
         - Usuarios
       operationId: deleteUser
-      summary: Eliminar un usuario y sus datos conectados
+      summary: Eliminar un usuario y sus datos conectados en cascada (conservando historial)
       parameters:
         - name: id
           in: path
@@ -106,7 +106,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminado exitosamente
+          description: Eliminado exitosamente o usuario no encontrado
           content:
             application/json:
               schema:
@@ -120,7 +120,7 @@ paths:
       tags:
         - Categorías
       operationId: createCategory
-      summary: Crear categoría validando existencia previa
+      summary: Crear una nueva categoría de alimentos
       requestBody:
         required: true
         content:
@@ -129,7 +129,7 @@ paths:
               $ref: '#/components/schemas/CategoriaInput'
       responses:
         "200":
-          description: Creado exitosamente
+          description: Creada exitosamente o error de validación
           content:
             application/json:
               schema:
@@ -141,7 +141,7 @@ paths:
       summary: Listar categorías
       responses:
         "200":
-          description: Lista obtenida
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
@@ -161,7 +161,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenida exitosamente
+          description: Obtenida exitosamente o no encontrada
           content:
             application/json:
               schema:
@@ -170,7 +170,7 @@ paths:
       tags:
         - Categorías
       operationId: deleteCategory
-      summary: Eliminar categoría (Protegida por integridad)
+      summary: Eliminar categoría (Bloqueada si tiene productos asociados)
       parameters:
         - name: id
           in: path
@@ -179,7 +179,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Resultado de la operación
+          description: Eliminada exitosamente o restricción de integridad aplicada
           content:
             application/json:
               schema:
@@ -193,7 +193,7 @@ paths:
       tags:
         - Marcas
       operationId: createBrand
-      summary: Crear marca
+      summary: Crear una nueva marca
       requestBody:
         required: true
         content:
@@ -202,7 +202,7 @@ paths:
               $ref: '#/components/schemas/MarcaInput'
       responses:
         "200":
-          description: Creado exitosamente
+          description: Creada exitosamente o error de validación
           content:
             application/json:
               schema:
@@ -214,7 +214,7 @@ paths:
       summary: Listar marcas
       responses:
         "200":
-          description: Lista obtenida
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
@@ -234,7 +234,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenida exitosamente
+          description: Obtenida exitosamente o no encontrada
           content:
             application/json:
               schema:
@@ -243,7 +243,7 @@ paths:
       tags:
         - Marcas
       operationId: deleteBrand
-      summary: Eliminar marca
+      summary: Eliminar marca (Bloqueada si tiene productos asociados)
       parameters:
         - name: id
           in: path
@@ -252,7 +252,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Resultado
+          description: Eliminada exitosamente o restricción de integridad aplicada
           content:
             application/json:
               schema:
@@ -266,7 +266,7 @@ paths:
       tags:
         - Unidades de Medida
       operationId: createUnit
-      summary: Crear unidad de medida
+      summary: Crear una nueva unidad de medida
       requestBody:
         required: true
         content:
@@ -275,7 +275,7 @@ paths:
               $ref: '#/components/schemas/UnidadMedidaInput'
       responses:
         "200":
-          description: Creado exitosamente
+          description: Creada exitosamente o error de validación
           content:
             application/json:
               schema:
@@ -284,10 +284,10 @@ paths:
       tags:
         - Unidades de Medida
       operationId: listUnits
-      summary: Listar unidades
+      summary: Listar unidades de medida
       responses:
         "200":
-          description: Lista obtenida
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
@@ -298,7 +298,7 @@ paths:
       tags:
         - Unidades de Medida
       operationId: getUnitById
-      summary: Consultar unidad individual por ID
+      summary: Consultar unidad de medida individual por ID
       parameters:
         - name: id
           in: path
@@ -307,7 +307,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenida
+          description: Obtenida exitosamente o no encontrada
           content:
             application/json:
               schema:
@@ -316,7 +316,7 @@ paths:
       tags:
         - Unidades de Medida
       operationId: deleteUnit
-      summary: Eliminar unidad
+      summary: Eliminar unidad (Bloqueada si está en uso en el inventario)
       parameters:
         - name: id
           in: path
@@ -325,7 +325,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Resultado
+          description: Eliminada exitosamente o restricción de integridad aplicada
           content:
             application/json:
               schema:
@@ -339,7 +339,7 @@ paths:
       tags:
         - Ingredientes
       operationId: createIngredient
-      summary: Crear ingrediente
+      summary: Crear un nuevo ingrediente base
       requestBody:
         required: true
         content:
@@ -348,7 +348,7 @@ paths:
               $ref: '#/components/schemas/IngredienteInput'
       responses:
         "200":
-          description: Creado
+          description: Creado exitosamente o error de validación
           content:
             application/json:
               schema:
@@ -360,7 +360,7 @@ paths:
       summary: Listar ingredientes
       responses:
         "200":
-          description: Lista obtenida
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
@@ -380,7 +380,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido
+          description: Obtenido exitosamente o no encontrado
           content:
             application/json:
               schema:
@@ -389,7 +389,7 @@ paths:
       tags:
         - Ingredientes
       operationId: deleteIngredient
-      summary: Eliminar ingrediente
+      summary: Eliminar ingrediente (Bloqueado si está en un Meal Prep)
       parameters:
         - name: id
           in: path
@@ -398,7 +398,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Resultado
+          description: Eliminado exitosamente o restricción de integridad aplicada
           content:
             application/json:
               schema:
@@ -412,7 +412,7 @@ paths:
       tags:
         - Productos
       operationId: createProduct
-      summary: Crear producto validando referencias en tiempo real
+      summary: Crear un nuevo producto comercial (Valida marca y categoría existentes)
       requestBody:
         required: true
         content:
@@ -421,7 +421,7 @@ paths:
               $ref: '#/components/schemas/ProductoInput'
       responses:
         "200":
-          description: Creado exitosamente
+          description: Creado exitosamente o error de referencia
           content:
             application/json:
               schema:
@@ -430,10 +430,10 @@ paths:
       tags:
         - Productos
       operationId: listProducts
-      summary: Listar productos
+      summary: Listar productos con detalle de marca y categoría
       responses:
         "200":
-          description: Lista obtenida
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
@@ -453,7 +453,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido
+          description: Obtenido exitosamente o no encontrado
           content:
             application/json:
               schema:
@@ -462,7 +462,7 @@ paths:
       tags:
         - Productos
       operationId: deleteProduct
-      summary: Eliminar producto
+      summary: Eliminar producto (Bloqueado si está en el inventario)
       parameters:
         - name: id
           in: path
@@ -471,7 +471,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Resultado
+          description: Eliminado exitosamente o restricción de integridad aplicada
           content:
             application/json:
               schema:
@@ -485,7 +485,7 @@ paths:
       tags:
         - Inventario
       operationId: addInventoryItem
-      summary: Agregar alimento validando usuario y producto en tiempo real (con acumulación inteligente)
+      summary: Agregar alimento a la nevera o acumular cantidad si ya existe activo
       requestBody:
         required: true
         content:
@@ -494,7 +494,7 @@ paths:
               $ref: '#/components/schemas/InventarioInput'
       responses:
         "200":
-          description: Agregado o actualizado exitosamente
+          description: Agregado o acumulado exitosamente
           content:
             application/json:
               schema:
@@ -503,7 +503,7 @@ paths:
       tags:
         - Inventario
       operationId: listInventoryItems
-      summary: Listar inventario (Filtrable en tiempo real por usuario y nevera)
+      summary: Listar inventario (Filtrable por usuario y nevera)
       parameters:
         - name: user_nombre
           in: query
@@ -517,7 +517,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Filtrado exitosamente
+          description: Lista obtenida exitosamente
           content:
             application/json:
               schema:
@@ -537,7 +537,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido
+          description: Obtenido exitosamente o no encontrado
           content:
             application/json:
               schema:
@@ -546,7 +546,7 @@ paths:
       tags:
         - Inventario
       operationId: updateInventoryItem
-      summary: Actualizar inventario
+      summary: Actualizar alimento del inventario y registrar en historial
       parameters:
         - name: itemId
           in: path
@@ -561,7 +561,7 @@ paths:
               $ref: '#/components/schemas/InventarioInput'
       responses:
         "200":
-          description: Actualizado
+          description: Actualizado exitosamente o no encontrado
           content:
             application/json:
               schema:
@@ -570,7 +570,7 @@ paths:
       tags:
         - Inventario
       operationId: deleteInventoryItem
-      summary: Eliminar del inventario
+      summary: Eliminar alimento del inventario y guardar snapshot en historial
       parameters:
         - name: itemId
           in: path
@@ -579,7 +579,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminado
+          description: Eliminado exitosamente o no encontrado
           content:
             application/json:
               schema:
@@ -593,10 +593,10 @@ paths:
       tags:
         - Historial de Inventario
       operationId: listInventoryHistory
-      summary: Listar bitácora de cambios
+      summary: Listar bitácora de cambios con respaldo (snapshot)
       responses:
         "200":
-          description: Historial obtenido
+          description: Historial obtenido exitosamente
           content:
             application/json:
               schema:
@@ -607,7 +607,7 @@ paths:
       tags:
         - Historial de Inventario
       operationId: getHistoryById
-      summary: Consultar historial individual por ID
+      summary: Consultar registro individual del historial por ID
       parameters:
         - name: id
           in: path
@@ -616,7 +616,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido
+          description: Obtenido exitosamente o no encontrado
           content:
             application/json:
               schema:
@@ -630,7 +630,7 @@ paths:
       tags:
         - Patrones Predictivos
       operationId: createPredictivePattern
-      summary: Crear patrón predictivo
+      summary: Crear un patrón predictivo de consumo (Valida usuario existente)
       requestBody:
         required: true
         content:
@@ -639,7 +639,7 @@ paths:
               $ref: '#/components/schemas/PatronPredictivoInput'
       responses:
         "200":
-          description: Creado
+          description: Creado exitosamente o error de validación
           content:
             application/json:
               schema:
@@ -648,7 +648,7 @@ paths:
       tags:
         - Patrones Predictivos
       operationId: getPredictivePatterns
-      summary: Obtener patrones
+      summary: Obtener patrones predictivos (Filtrable por usuario)
       parameters:
         - name: user_nombre
           in: query
@@ -657,7 +657,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido
+          description: Obtenidos exitosamente
           content:
             application/json:
               schema:
@@ -668,7 +668,7 @@ paths:
       tags:
         - Patrones Predictivos
       operationId: getPredictivePatternById
-      summary: Consultar patrón individual por ID
+      summary: Consultar patrón predictivo individual por ID
       parameters:
         - name: id
           in: path
@@ -677,7 +677,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido
+          description: Obtenido exitosamente o no encontrado
           content:
             application/json:
               schema:
@@ -691,7 +691,7 @@ paths:
       tags:
         - Planes de Comida (Meal Preps)
       operationId: createMealPrep
-      summary: Crear plan de comida validando llaves foráneas en tiempo real
+      summary: Crear plan de comida (Valida patrón predictivo, ingrediente y unicidad del patrón)
       requestBody:
         required: true
         content:
@@ -700,7 +700,7 @@ paths:
               $ref: '#/components/schemas/MealPrepInput'
       responses:
         "200":
-          description: Creado
+          description: Creado exitosamente o error de validación/duplicidad
           content:
             application/json:
               schema:
@@ -709,10 +709,10 @@ paths:
       tags:
         - Planes de Comida (Meal Preps)
       operationId: listMealPreps
-      summary: Listar planes
+      summary: Listar planes de comida
       responses:
         "200":
-          description: Listado obtenido
+          description: Listado obtenido exitosamente
           content:
             application/json:
               schema:
@@ -723,7 +723,7 @@ paths:
       tags:
         - Planes de Comida (Meal Preps)
       operationId: getMealPrepById
-      summary: Consultar plan individual por ID
+      summary: Consultar plan de comida individual por ID
       parameters:
         - name: id
           in: path
@@ -732,7 +732,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenido
+          description: Obtenido exitosamente o no encontrado
           content:
             application/json:
               schema:
@@ -741,7 +741,7 @@ paths:
       tags:
         - Planes de Comida (Meal Preps)
       operationId: deleteMealPrep
-      summary: Eliminar plan
+      summary: Eliminar plan de comida por ID
       parameters:
         - name: id
           in: path
@@ -750,7 +750,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminado
+          description: Eliminado exitosamente o no encontrado
           content:
             application/json:
               schema:
@@ -764,7 +764,7 @@ paths:
       tags:
         - Notificaciones
       operationId: createNotification
-      summary: Crear notificación
+      summary: Crear notificación para un usuario existente
       requestBody:
         required: true
         content:
@@ -773,7 +773,7 @@ paths:
               $ref: '#/components/schemas/NotificacionInput'
       responses:
         "200":
-          description: Creado
+          description: Creada exitosamente o error de validación
           content:
             application/json:
               schema:
@@ -782,7 +782,7 @@ paths:
       tags:
         - Notificaciones
       operationId: listNotifications
-      summary: Listar notificaciones
+      summary: Listar notificaciones (Filtrable por usuario)
       parameters:
         - name: user_nombre
           in: query
@@ -791,7 +791,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenidas
+          description: Obtenidas exitosamente
           content:
             application/json:
               schema:
@@ -811,7 +811,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Obtenida
+          description: Obtenida exitosamente o no encontrada
           content:
             application/json:
               schema:
@@ -820,7 +820,7 @@ paths:
       tags:
         - Notificaciones
       operationId: deleteNotification
-      summary: Eliminar notificación
+      summary: Eliminar notificación por ID
       parameters:
         - name: id
           in: path
@@ -829,7 +829,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Eliminado
+          description: Eliminada exitosamente o no encontrada
           content:
             application/json:
               schema:
@@ -862,6 +862,7 @@ components:
           format: email
         password_hash:
           type: string
+          description: Mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos
 
     CategoriaInput:
       type: object
@@ -943,7 +944,7 @@ components:
       properties:
         patron_predictivo_id:
           type: string
-          description: ID del patrón predictivo (FK)
+          description: ID del patrón predictivo (FK, único por plan)
         ingrediente_nombre:
           type: string
           description: Nombre del ingrediente base (FK)
