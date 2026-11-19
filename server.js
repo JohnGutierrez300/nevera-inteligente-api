@@ -213,7 +213,6 @@ app.get('/api/usuarios', async (req, res, next) => {
     const { busqueda } = req.query;
     let filtro = {};
 
-    // Si el usuario envió un parámetro de búsqueda
     if (busqueda && busqueda.trim() !== '') {
       filtro = {
         $or: [
@@ -222,15 +221,10 @@ app.get('/api/usuarios', async (req, res, next) => {
           { email: { $regex: busqueda, $options: 'i' } }
         ]
       };
-    } else {
-      // Opcional: Si no envían nada en la búsqueda, puedes decidir si quieres que devuelva vacío 
-      // o la lista completa. Para que demuestre que el filtro actúa, si está vacío y el profesor 
-      // quiere ver el comportamiento estricto, podemos hacer que exija un parámetro o devuelva la lista.
     }
 
     const usuarios = await Usuario.find(filtro);
 
-    // Si mandaron una búsqueda y no devolvió nada, le avisamos limpiamente
     if (busqueda && usuarios.length === 0) {
       return res.status(200).json(responseFormat(false, `No se encontró ningún usuario que coincida con '${busqueda}'`, []));
     }
@@ -661,7 +655,12 @@ app.get('/api/historial_inventario/:id', async (req, res, next) => {
 // 8. Patrones Predictivos
 app.post('/api/patrones_predictivos', async (req, res, next) => {
   try {
-    const nuevoPatron = new PatronPredictivo(req.body);
+    const { _id, user_nombre, frecuencia_compra_dias, probabilidad_desperdicio } = req.body;
+    const usuarioExiste = await Usuario.findById(user_nombre);
+    if (!usuarioExiste) {
+      return res.status(200).json(responseFormat(false, `El usuario '${user_nombre}' no existe. Debe crearlo primero.`, null));
+    }
+    const nuevoPatron = new PatronPredictivo({ _id, user_nombre, frecuencia_compra_dias, probabilidad_desperdicio });
     await nuevoPatron.save();
     res.status(200).json(responseFormat(true, 'Patrón predictivo creado exitosamente', nuevoPatron));
   } catch (error) {
@@ -671,7 +670,9 @@ app.post('/api/patrones_predictivos', async (req, res, next) => {
 
 app.get('/api/patrones_predictivos', async (req, res, next) => {
   try {
-    const patrones = await PatronPredictivo.find().lean();
+    const filtro = {};
+    if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
+    const patrones = await PatronPredictivo.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Patrones predictivos obtenidos', patrones));
   } catch (error) {
     next(error);
@@ -737,10 +738,22 @@ app.delete('/api/ingredientes/:id', async (req, res, next) => {
 // 10. Meal Preps
 app.post('/api/meal_preps', async (req, res, next) => {
   try {
-    const nuevoMealPrep = new MealPrep(req.body);
-    await nuevoMealPrepsave();
-    res.status(200).json(responseFormat(true, 'Plan de comidas creado', nuevoMealPrep));
+    const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
+    const patronExiste = await PatronPredictivo.findById(patron_predictivo_id);
+    if (!patronExiste) {
+      return res.status(200).json(responseFormat(false, `El patrón predictivo '${patron_predictivo_id}' no existe. Debe crearlo primero.`, null));
+    }
+    const ingredienteExiste = await Ingrediente.findById(ingrediente_nombre);
+    if (!ingredienteExiste) {
+      return res.status(200).json(responseFormat(false, `El ingrediente '${ingrediente_nombre}' no existe. Debe crearlo primero.`, null));
+    }
+    const nuevoMealPrep = new MealPrep({ patron_predictivo_id, ingrediente_nombre, nombre_receta });
+    await nuevoMealPrep.save();
+    res.status(200).json(responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep));
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(200).json(responseFormat(false, 'Ya existe un plan de comidas asociado a este patrón predictivo.', null));
+    }
     next(error);
   }
 });
@@ -781,18 +794,25 @@ app.delete('/api/meal_preps/:id', async (req, res, next) => {
 // 11. Notificaciones
 app.post('/api/notificaciones', async (req, res, next) => {
   try {
-    const nuevaNoti = new Notificacion(req.body);
+    const { user_nombre, mensaje, tipo, leida } = req.body;
+    const usuarioExiste = await Usuario.findById(user_nombre);
+    if (!usuarioExiste) {
+      return res.status(200).json(responseFormat(false, `El usuario '${user_nombre}' no existe. Debe crearlo primero.`, null));
+    }
+    const nuevaNoti = new Notificacion({ user_nombre, mensaje, tipo, leida });
     await nuevaNoti.save();
-    res.status(200).json(responseFormat(true, 'Notificación creada', nuevaNoti));
+    res.status(200).json(responseFormat(true, 'Notificación creada exitosamente', nuevaNoti));
   } catch (error) {
     next(error);
   }
 });
 
-app.get('/api/notificaciones', async (req, rawRes, next) => {
+app.get('/api/notificaciones', async (req, res, next) => {
   try {
-    const notificaciones = await Notificacion.find();
-    rawRes.status(200).json(responseFormat(true, 'Notificaciones obtenidas', notificaciones));
+    const filtro = {};
+    if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
+    const notificaciones = await Notificacion.find(filtro).lean();
+    res.status(200).json(responseFormat(true, 'Notificaciones obtenidas', notificaciones));
   } catch (error) {
     next(error);
   }
