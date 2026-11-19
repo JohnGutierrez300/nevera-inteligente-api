@@ -77,11 +77,11 @@ const camposReferencia = (Model) => {
   return campos;
 };
 
-// Busca un documento por su _id en tiempo real; si no existe responde 404
+// Busca por _id y devuelve HTTP 200 con success:false cuando falta el recurso
 const obtenerOFallar = async (Model, id) => {
   const doc = idCompatible(Model, id) ? await Model.findById(id).lean() : null;
   if (!doc) {
-    throw new ApiError(404, MSG_NO_ENCONTRADO, { recurso: Model.modelName, id });
+    throw new ApiError(200, MSG_NO_ENCONTRADO, { recurso: Model.modelName, id });
   }
   return doc;
 };
@@ -94,7 +94,7 @@ const validarReferencias = async (Model, datos = {}) => {
     const ModeloRef = mongoose.model(modeloRef);
     const existe = idCompatible(ModeloRef, valor) && await ModeloRef.exists({ _id: valor });
     if (!existe) {
-      throw new ApiError(404, MSG_NO_ENCONTRADO, { campo, valor, recurso: modeloRef });
+      throw new ApiError(200, MSG_NO_ENCONTRADO, { campo, valor, recurso: modeloRef });
     }
   }
 };
@@ -133,7 +133,7 @@ mongoose.plugin((schema) => {
   });
 });
 
-// Elimina por _id: 404 si no existe, 409 (vía plugin) si está referenciado
+// Elimina por _id: HTTP 200 con success:false si falta y 409 si hay dependencias
 const eliminarPorId = async (Model, id) => {
   await obtenerOFallar(Model, id);
   return Model.findByIdAndDelete(id);
@@ -856,13 +856,20 @@ app.delete('/api/notificaciones/:id', async (req, res, next) => {
 // ==========================================
 app.use((err, req, res, next) => {
   console.error("Error detectado:", err.message);
-  // 404 (ID no encontrado) y 409 (eliminación bloqueada) llevan su código; el resto conserva el formato previo
-  const status = err instanceof ApiError ? err.status : 200;
-  res.status(status).json({
-    success: false,
-    message: err.message || 'Error interno del servidor',
-    data: err instanceof ApiError ? err.data : null
-  });
+  if (err instanceof ApiError) {
+    return res.status(err.status).json(responseFormat(false, err.message, err.data));
+  }
+
+  // Los rechazos de negocio conservan el contrato de respuesta de la API.
+  if (err instanceof mongoose.Error.ValidationError || err.code === 11000) {
+    return res.status(200).json(responseFormat(false, err.message));
+  }
+
+  const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 500
+    ? err.status
+    : 500;
+  const message = status === 500 ? 'Error interno del servidor' : err.message;
+  res.status(status).json(responseFormat(false, message));
 });
 
 // Inicialización del Servidor

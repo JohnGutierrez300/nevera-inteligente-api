@@ -5,7 +5,7 @@ info:
     API RESTful con arquitectura jerárquica, validaciones en tiempo real, restricciones de integridad y respuestas unificadas.
 
     **Integridad referencial**
-    - **Validación de IDs (404):** todo ID de otra colección recibido en el body o en la query (`user_nombre`, `producto_id`, `marca_nombre`, etc.) se busca en tiempo real. Si no existe, la API responde `404` con el mensaje *"El recurso con el ID proporcionado no fue encontrado"*.
+    - **Validación de IDs:** si el ID de ruta o una referencia del body o de la query no existe, la API devuelve HTTP `200` con `success: false`.
     - **Restricción al eliminar (409):** un recurso no puede eliminarse mientras otros registros lo referencien. La API responde `409` con el mensaje *"No se puede eliminar el registro porque está siendo utilizado en otros registros del sistema"* e indica en `data.dependencias` qué colecciones lo usan.
     - El historial de inventario es una bitácora y no bloquea eliminaciones.
     - **Validación en vivo:** al pulsar *Try it out*, los campos de ID (ruta, query y campos foráneos del body) se validan mientras se escriben o al salir del campo, sin presionar *Execute* (✅ / ❌ bajo el campo).
@@ -34,6 +34,10 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [Usuarios]
       operationId: listUsers
@@ -48,6 +52,8 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/usuarios/{id}:
     parameters:
@@ -58,9 +64,9 @@ paths:
       summary: Consultar un usuario individual por su ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
     put:
       tags: [Usuarios]
       operationId: updateUser
@@ -73,20 +79,22 @@ paths:
               $ref: '#/components/schemas/UsuarioUpdate'
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [Usuarios]
       operationId: deleteUser
       summary: Eliminar un usuario (Bloqueado si tiene inventario, patrones predictivos o notificaciones)
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
         "409":
           $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 2. MÓDULO DE CATEGORÍAS
@@ -105,6 +113,10 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [Categorías]
       operationId: listCategories
@@ -112,6 +124,8 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/categorias/{id}:
     parameters:
@@ -122,20 +136,20 @@ paths:
       summary: Consultar categoría individual por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [Categorías]
       operationId: deleteCategory
       summary: Eliminar categoría (Bloqueada si tiene productos asociados)
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
         "409":
           $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 3. MÓDULO DE MARCAS
@@ -154,6 +168,10 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [Marcas]
       operationId: listBrands
@@ -161,6 +179,8 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/marcas/{id}:
     parameters:
@@ -171,20 +191,20 @@ paths:
       summary: Consultar marca individual por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [Marcas]
       operationId: deleteBrand
       summary: Eliminar marca (Bloqueada si tiene productos asociados)
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
         "409":
           $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 4. MÓDULO DE UNIDADES DE MEDIDA
@@ -203,6 +223,10 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [Unidades de Medida]
       operationId: listUnits
@@ -210,6 +234,8 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/unidades_medida/{id}:
     parameters:
@@ -220,20 +246,20 @@ paths:
       summary: Consultar unidad de medida individual por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [Unidades de Medida]
       operationId: deleteUnit
       summary: Eliminar unidad (Bloqueada si está en uso en el inventario)
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
         "409":
           $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 5. MÓDULO DE INGREDIENTES
@@ -252,6 +278,10 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [Ingredientes]
       operationId: listIngredients
@@ -259,6 +289,8 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/ingredientes/{id}:
     parameters:
@@ -269,20 +301,20 @@ paths:
       summary: Consultar ingrediente individual por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [Ingredientes]
       operationId: deleteIngredient
       summary: Eliminar ingrediente (Bloqueado si está en un Meal Prep)
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
         "409":
           $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 6. MÓDULO DE PRODUCTOS
@@ -300,9 +332,11 @@ paths:
               $ref: '#/components/schemas/ProductoInput'
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [Productos]
       operationId: listProducts
@@ -310,6 +344,8 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/productos/{id}:
     parameters:
@@ -320,20 +356,20 @@ paths:
       summary: Consultar producto individual por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [Productos]
       operationId: deleteProduct
       summary: Eliminar producto (Bloqueado si está en el inventario)
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
         "409":
           $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 7. MÓDULO DE INVENTARIO
@@ -351,9 +387,11 @@ paths:
               $ref: '#/components/schemas/InventarioInput'
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [Inventario]
       operationId: listInventoryItems
@@ -368,9 +406,9 @@ paths:
             example: NEVERA-01
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/inventario/{itemId}:
     parameters:
@@ -381,9 +419,9 @@ paths:
       summary: Consultar detalle de un alimento por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
     put:
       tags: [Inventario]
       operationId: updateInventoryItem
@@ -396,20 +434,22 @@ paths:
               $ref: '#/components/schemas/InventarioUpdate'
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [Inventario]
       operationId: deleteInventoryItem
       summary: Eliminar alimento del inventario y guardar snapshot en historial
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
         "409":
           $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 8. MÓDULO DE HISTORIAL DE INVENTARIO
@@ -422,6 +462,8 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/historial_inventario/{id}:
     parameters:
@@ -432,9 +474,9 @@ paths:
       summary: Consultar registro individual del historial por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 9. MÓDULO DE PATRONES PREDICTIVOS
@@ -452,9 +494,11 @@ paths:
               $ref: '#/components/schemas/PatronPredictivoInput'
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [Patrones Predictivos]
       operationId: getPredictivePatterns
@@ -463,9 +507,9 @@ paths:
         - $ref: '#/components/parameters/UsuarioIdQuery'
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/patrones_predictivos/{id}:
     parameters:
@@ -476,20 +520,20 @@ paths:
       summary: Consultar patrón predictivo individual por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [Patrones Predictivos]
       operationId: deletePredictivePattern
       summary: Eliminar patrón predictivo (bloqueado si un plan de comidas lo utiliza)
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
         "409":
           $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 12. VALIDACIÓN DE IDs EN TIEMPO REAL
@@ -503,6 +547,8 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/validaciones/{coleccion}/{id}:
     get:
@@ -541,6 +587,10 @@ paths:
                     success: false
                     message: 'Error: El ID no existe en la base de datos'
                     data: { existe: false, coleccion: usuarios, recurso: Usuario, id: '9999' }
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 10. MÓDULO DE PLANES DE COMIDA (MEAL PREPS)
@@ -558,9 +608,11 @@ paths:
               $ref: '#/components/schemas/MealPrepInput'
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [Planes de Comida (Meal Preps)]
       operationId: listMealPreps
@@ -568,6 +620,8 @@ paths:
       responses:
         "200":
           $ref: '#/components/responses/Ok'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/meal_preps/{id}:
     parameters:
@@ -578,20 +632,20 @@ paths:
       summary: Consultar plan de comida individual por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [Planes de Comida (Meal Preps)]
       operationId: deleteMealPrep
       summary: Eliminar plan de comida por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
         "409":
           $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   # ==========================================
   # 11. MÓDULO DE NOTIFICACIONES
@@ -609,9 +663,11 @@ paths:
               $ref: '#/components/schemas/NotificacionInput'
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "500":
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [Notificaciones]
       operationId: listNotifications
@@ -620,9 +676,9 @@ paths:
         - $ref: '#/components/parameters/UsuarioIdQuery'
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/notificaciones/{id}:
     parameters:
@@ -633,20 +689,20 @@ paths:
       summary: Consultar notificación individual por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
+        "500":
+          $ref: '#/components/responses/InternalError'
     delete:
       tags: [Notificaciones]
       operationId: deleteNotification
       summary: Eliminar notificación por ID
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
-        "404":
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/OkWithLookup'
         "409":
           $ref: '#/components/responses/Conflict'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
 components:
   # ------------------------------------------
@@ -657,7 +713,7 @@ components:
       name: id
       in: path
       required: true
-      description: ID numérico del usuario (colección `usuarios`). Se busca en tiempo real; si no existe responde 404.
+      description: ID numérico del usuario (colección `usuarios`). Se busca en tiempo real; si no existe devuelve HTTP 200 con `success: false`.
       schema:
         type: string
         pattern: '^\d+$'
@@ -666,7 +722,7 @@ components:
       name: user_nombre
       in: query
       required: false
-      description: ID del usuario para filtrar (colección `usuarios`). Si se envía y no existe responde 404.
+      description: ID del usuario para filtrar (colección `usuarios`). Si se envía y no existe devuelve HTTP 200 con `success: false`.
       schema:
         type: string
         example: '1001'
@@ -722,7 +778,7 @@ components:
       name: itemId
       in: path
       required: true
-      description: ObjectId de MongoDB del alimento (24 caracteres hexadecimales, colección `inventario`). Un formato inválido también responde 404.
+      description: ObjectId de MongoDB del alimento (24 caracteres hexadecimales, colección `inventario`). Un formato inválido también devuelve HTTP 200 con `success: false`.
       schema:
         $ref: '#/components/schemas/ObjectId'
     HistorialIdPath:
@@ -757,13 +813,18 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ApiResponse'
-    NotFound:
-      description: El ID de la ruta, o un ID de otra colección enviado en el body/query, no existe.
+    OkWithLookup:
+      description: Si el ID solicitado o referenciado no existe, devuelve `success: false` con el detalle del ID.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorNotFound'
+            $ref: '#/components/schemas/ApiResponse'
           examples:
+            encontrado:
+              summary: Operación completada
+              value:
+                success: true
+                message: Operación procesada exitosamente
             idDeRuta:
               summary: El recurso solicitado no existe
               value:
@@ -781,6 +842,18 @@ components:
                   campo: user_nombre
                   valor: '9999'
                   recurso: Usuario
+    BadRequest:
+      description: La solicitud contiene JSON inválido o indica una colección no admitida.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+    InternalError:
+      description: Un fallo interno impidió procesar la operación.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
     Conflict:
       description: El recurso está referenciado por otros registros y no puede eliminarse.
       content:
@@ -812,37 +885,7 @@ components:
         message:
           type: string
         data:
-          type: object
-          nullable: true
-
-    ErrorNotFound:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: false
-        message:
-          type: string
-          example: El recurso con el ID proporcionado no fue encontrado
-        data:
-          type: object
-          description: Detalle del ID que no se encontró
-          properties:
-            recurso:
-              type: string
-              description: Modelo donde se buscó el ID
-              example: Usuario
-            id:
-              type: string
-              description: ID de la ruta que no existe
-            campo:
-              type: string
-              description: Campo del body/query con el ID foráneo inexistente
-              example: user_nombre
-            valor:
-              type: string
-              description: Valor enviado en ese campo
-              example: '9999'
+          description: Documento, lista o detalle del resultado. Puede ser nulo.
 
     ErrorConflict:
       type: object
@@ -957,11 +1000,11 @@ components:
           example: PROD-001
         marca_nombre:
           type: string
-          description: "**FK → marcas._id.** Se valida en tiempo real; si la marca no existe responde 404."
+          description: "**FK → marcas._id.** Se valida en tiempo real; si la marca no existe devuelve HTTP 200 con `success: false`."
           example: Alpina
         categoria_nombre:
           type: string
-          description: "**FK → categorias._id.** Se valida en tiempo real; si la categoría no existe responde 404."
+          description: "**FK → categorias._id.** Se valida en tiempo real; si la categoría no existe devuelve HTTP 200 con `success: false`."
           example: Lacteos
         nombre:
           type: string
@@ -973,7 +1016,7 @@ components:
       properties:
         user_nombre:
           type: string
-          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe responde 404."
+          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe devuelve HTTP 200 con `success: false`."
           example: '1001'
         nevera_id:
           type: string
@@ -981,11 +1024,11 @@ components:
           example: NEVERA-01
         producto_id:
           type: string
-          description: "**FK → productos._id.** Se valida en tiempo real; si el producto no existe responde 404."
+          description: "**FK → productos._id.** Se valida en tiempo real; si el producto no existe devuelve HTTP 200 con `success: false`."
           example: PROD-001
         unidad_medida_nombre:
           type: string
-          description: "**FK → unidades_medida._id.** Se valida en tiempo real; si la unidad no existe responde 404."
+          description: "**FK → unidades_medida._id.** Se valida en tiempo real; si la unidad no existe devuelve HTTP 200 con `success: false`."
           example: Litro
         cantidad:
           type: number
@@ -1002,22 +1045,22 @@ components:
 
     InventarioUpdate:
       type: object
-      description: Todos los campos son opcionales; los IDs foráneos enviados se validan en tiempo real (404 si no existen).
+      description: Todos los campos son opcionales; los IDs foráneos enviados se validan en tiempo real (HTTP 200 con `success: false` si no existen).
       properties:
         user_nombre:
           type: string
-          description: "**FK → usuarios._id.** 404 si no existe."
+          description: "**FK → usuarios._id.** HTTP 200 con `success: false` si no existe."
           example: '1001'
         nevera_id:
           type: string
           example: NEVERA-01
         producto_id:
           type: string
-          description: "**FK → productos._id.** 404 si no existe."
+          description: "**FK → productos._id.** HTTP 200 con `success: false` si no existe."
           example: PROD-001
         unidad_medida_nombre:
           type: string
-          description: "**FK → unidades_medida._id.** 404 si no existe."
+          description: "**FK → unidades_medida._id.** HTTP 200 con `success: false` si no existe."
           example: Litro
         cantidad:
           type: number
@@ -1039,7 +1082,7 @@ components:
           example: PATRON-001
         user_nombre:
           type: string
-          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe responde 404."
+          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe devuelve HTTP 200 con `success: false`."
           example: '1001'
         frecuencia_compra_dias:
           type: number
@@ -1054,11 +1097,11 @@ components:
       properties:
         patron_predictivo_id:
           type: string
-          description: "**FK → patrones_predictivos._id** (único por plan). Se valida en tiempo real; si no existe responde 404."
+          description: "**FK → patrones_predictivos._id** (único por plan). Se valida en tiempo real; si no existe devuelve HTTP 200 con `success: false`."
           example: PATRON-001
         ingrediente_nombre:
           type: string
-          description: "**FK → ingredientes._id.** Se valida en tiempo real; si no existe responde 404."
+          description: "**FK → ingredientes._id.** Se valida en tiempo real; si no existe devuelve HTTP 200 con `success: false`."
           example: Leche
         nombre_receta:
           type: string
@@ -1070,7 +1113,7 @@ components:
       properties:
         user_nombre:
           type: string
-          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe responde 404."
+          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe devuelve HTTP 200 con `success: false`."
           example: '1001'
         mensaje:
           type: string
