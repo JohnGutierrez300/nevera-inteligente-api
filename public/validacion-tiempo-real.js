@@ -13,6 +13,7 @@
   var CACHE_MS = 5000;
   var mapaPromesa = null;
   var cache = new Map();
+  var tokenAnterior;
 
   function cargarMapa() {
     if (!mapaPromesa) {
@@ -25,11 +26,20 @@
   }
 
   function consultar(coleccion, id) {
+    var token = window.ui?.authSelectors?.authorized()?.getIn(['bearerAuth', 'value']);
+    if (token !== tokenAnterior) {
+      cache.clear();
+      tokenAnterior = token;
+    }
     var clave = coleccion + '|' + id;
     var guardado = cache.get(clave);
     if (guardado && Date.now() - guardado.t < CACHE_MS) return guardado.p;
-    var p = fetch(BASE + '/' + encodeURIComponent(coleccion) + '/' + encodeURIComponent(id))
-      .then(function (r) { return r.json(); })
+    var opciones = token ? { headers: { Authorization: 'Bearer ' + token } } : undefined;
+    var p = fetch(BASE + '/' + encodeURIComponent(coleccion) + '/' + encodeURIComponent(id), opciones)
+      .then(function (r) {
+        if (r.status === 401) return { success: null, message: 'Autoriza tu sesión en Swagger para validar este ID' };
+        return r.json();
+      })
       .catch(function () {
         cache.delete(clave);
         return { success: null, message: 'No se pudo validar el ID (sin conexión con el servidor)' };

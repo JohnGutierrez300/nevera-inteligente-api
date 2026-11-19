@@ -4,6 +4,8 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const YAML = require('yamljs');
+const { randomBytes } = require('node:crypto');
+const { huella, protegerClave, verificarClave } = require('./credenciales');
 require('dotenv').config();
 
 const app = express();
@@ -25,7 +27,9 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, {
 }));
 
 // Conexión a MongoDB Atlas
-mongoose.connect(process.env.MONGO_URI)
+mongoose.set('transactionAsyncLocalStorage', true);
+const conexion = mongoose.connect(process.env.MONGO_URI);
+conexion
   .then(() => console.log('Base de datos conectada exitosamente a MongoDB Atlas: nevera_inteligente'))
   .catch((err) => console.error('Error al conectar a MongoDB:', err));
 
@@ -78,8 +82,8 @@ const camposReferencia = (Model) => {
 };
 
 // Busca por _id y devuelve HTTP 200 con success:false cuando falta el recurso
-const obtenerOFallar = async (Model, id) => {
-  const doc = idCompatible(Model, id) ? await Model.findById(id).lean() : null;
+const obtenerOFallar = async (Model, id, filtro = {}) => {
+  const doc = idCompatible(Model, id) ? await Model.findOne({ ...filtro, _id: id }).lean() : null;
   if (!doc) {
     throw new ApiError(200, MSG_NO_ENCONTRADO, { recurso: Model.modelName, id });
   }
@@ -134,9 +138,9 @@ mongoose.plugin((schema) => {
 });
 
 // Elimina por _id: HTTP 200 con success:false si falta y 409 si hay dependencias
-const eliminarPorId = async (Model, id) => {
-  await obtenerOFallar(Model, id);
-  return Model.findByIdAndDelete(id);
+const eliminarPorId = async (Model, id, filtro = {}) => {
+  await obtenerOFallar(Model, id, filtro);
+  return Model.findOneAndDelete({ ...filtro, _id: id });
 };
 
 // ==========================================
@@ -147,8 +151,23 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   _id: { type: String, required: true },
   nombre: { type: String, required: true, unique: true },
   email: { type: String, required: true, unique: true },
-  password_hash: { type: String, required: true }
+  password_hash: { type: String, required: true, select: false }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
+
+const Sesion = mongoose.model('Sesion', new mongoose.Schema({
+  _id: String,
+  usuario: { type: String, required: true },
+  credencial: { type: String, required: true },
+  vence: { type: Date, required: true, expires: 0 }
+}, { collection: 'sesiones', versionKey: false }));
+
+const BloqueoMutaciones = mongoose.model('BloqueoMutaciones', new mongoose.Schema({
+  _id: String,
+  revision: Number
+}, { collection: 'bloqueos_mutaciones', versionKey: false }));
+
+const NEVERA_PREDETERMINADA = 'NEVERA-01';
+const ESTADOS_INVENTARIO = ['EN_NEVERA', 'CONSUMIDO', 'DESPERDICIADO'];
 
 const Categoria = mongoose.model('Categoria', new mongoose.Schema({
   _id: { type: String, required: true }
@@ -172,13 +191,16 @@ const Producto = mongoose.model('Producto', new mongoose.Schema({
 
 const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
-  nevera_id: { type: String, required: true, default: 'NEVERA-01' },
+  nevera_id: { type: String, required: true, default: NEVERA_PREDETERMINADA },
   producto_id: { type: String, ref: 'Producto', required: true },
   unidad_medida_nombre: { type: String, ref: 'UnidadMedida', required: true },
-  cantidad: { type: Number, required: true },
+  cantidad: { type: Number, required: true, min: 0, validate: Number.isFinite },
   fecha_vencimiento: { type: Date, default: null },
-  estado: { type: String, enum: ['EN_NEVERA', 'CONSUMIDO', 'DESPERDICIADO'], default: 'EN_NEVERA' }
+  estado: { type: String, enum: ESTADOS_INVENTARIO, default: 'EN_NEVERA' },
+  alerta_vencimiento_generada: { type: Date, select: false }
 }, { collection: 'inventario', versionKey: false }));
+Inventario.schema.index({ user_nombre: 1, nevera_id: 1, producto_id: 1, estado: 1, unidad_medida_nombre: 1, fecha_vencimiento: 1 });
+Inventario.schema.index({ estado: 1, fecha_vencimiento: 1 });
 
 const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.Schema({
   inventario_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Inventario' },
@@ -187,6 +209,7 @@ const HistorialInventario = mongoose.model('HistorialInventario', new mongoose.S
   detalles: { type: String, required: true },
   fecha: { type: Date, default: Date.now }
 }, { collection: 'historial_inventario', versionKey: false }));
+HistorialInventario.schema.index({ 'snapshot_datos.user_nombre': 1, fecha: -1 });
 
 const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema({
   _id: { type: String, required: true },
@@ -211,9 +234,71 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
   mensaje: { type: String, required: true },
   tipo: { type: String, enum: ['VENCIMIENTO', 'STOCK_BAJO', 'SUGERENCIA'], default: 'SUGERENCIA' },
+  nevera_id: String,
+  inventario_id: mongoose.Schema.Types.ObjectId,
   leida: { type: Boolean, default: false },
   fecha: { type: Date, default: Date.now }
 }, { collection: 'notificaciones', versionKey: false }));
+
+const DURACION_SESION_MS = 24 * 60 * 60 * 1000;
+const CLAVE_SEGURA = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,1024}$/;
+
+async function autenticar(req, res, next) {
+  const token = /^Bearer ([a-f0-9]{64})$/i.exec(req.get('authorization') || '');
+  const sesion = token && await Sesion.findOne({ _id: huella(token[1]), vence: { $gt: new Date() } }).lean();
+  const usuario = sesion && await Usuario.findById(sesion.usuario).select('+password_hash').lean();
+  if (typeof usuario?.password_hash !== 'string' || huella(usuario.password_hash) !== sesion.credencial) {
+    res.set('WWW-Authenticate', 'Bearer');
+    throw new ApiError(401, 'Inicia sesión y proporciona un token válido');
+  }
+  req.usuarioId = usuario._id;
+  next();
+}
+
+function exigirPropietario(usuarioId, solicitado) {
+  if (solicitado !== undefined && solicitado !== usuarioId) {
+    throw new ApiError(403, 'El usuario solicitado no corresponde a la sesión');
+  }
+}
+
+async function filtroPropietario(Model, usuarioId) {
+  switch (Model) {
+    case Usuario: return { _id: usuarioId };
+    case Inventario:
+    case PatronPredictivo:
+    case Notificacion: return { user_nombre: usuarioId };
+    case HistorialInventario: return { 'snapshot_datos.user_nombre': usuarioId };
+    case MealPrep:
+      return { patron_predictivo_id: { $in: await PatronPredictivo.distinct('_id', { user_nombre: usuarioId }) } };
+    default: return {};
+  }
+}
+
+let bloqueoListo;
+async function enTransaccion(operacion) {
+  if (!bloqueoListo) {
+    bloqueoListo = BloqueoMutaciones.updateOne(
+      { _id: 'referencias' }, { $setOnInsert: { revision: 0 } }, { upsert: true }
+    ).catch(error => {
+      if (error.code === 11000) return;
+      bloqueoListo = undefined;
+      throw error;
+    });
+  }
+  await bloqueoListo;
+  return mongoose.connection.transaction(async () => {
+    // Serializa las altas de referencias y los borrados entre instancias de la API.
+    await BloqueoMutaciones.updateOne({ _id: 'referencias' }, { $inc: { revision: 1 } });
+    return operacion();
+  });
+}
+
+function mutacion(metodo, ruta, handler) {
+  app[metodo](ruta, async (req, res) => {
+    const respuesta = await enTransaccion(() => handler(req));
+    res.status(200).json(respuesta);
+  });
+}
 
 // ==========================================
 // VALIDACIÓN DE IDs EN TIEMPO REAL (usada por Swagger UI)
@@ -237,11 +322,11 @@ const ETIQUETAS = {
 const mapaValidacion = () => {
   const colecciones = {};
   const campos = {};
-  for (const nombre of mongoose.modelNames()) {
+  for (const nombre of Object.keys(ETIQUETAS)) {
     const Model = mongoose.model(nombre);
     colecciones[Model.collection.collectionName] = nombre;
   }
-  for (const nombre of mongoose.modelNames()) {
+  for (const nombre of Object.keys(ETIQUETAS)) {
     for (const { campo, modeloRef } of camposReferencia(mongoose.model(nombre))) {
       campos[campo] = mongoose.model(modeloRef).collection.collectionName;
     }
@@ -257,12 +342,20 @@ app.get('/api/validaciones/mapa', (req, res) => {
 app.get('/api/validaciones/:coleccion/:id', async (req, res, next) => {
   try {
     const { coleccion, id } = req.params;
-    const nombreModelo = mapaValidacion().colecciones[coleccion];
-    if (!nombreModelo) {
+    const { colecciones } = mapaValidacion();
+    if (!Object.hasOwn(colecciones, coleccion)) {
       throw new ApiError(400, `La colección '${coleccion}' no admite validación`);
     }
+    const nombreModelo = colecciones[coleccion];
     const Model = mongoose.model(nombreModelo);
-    const existe = idCompatible(Model, id) && !!(await Model.exists({ _id: id }));
+    const privado = [Usuario, Inventario, HistorialInventario, PatronPredictivo, MealPrep, Notificacion].includes(Model);
+    let filtro = {};
+    if (privado) {
+      await autenticar(req, res, () => {});
+      filtro = await filtroPropietario(Model, req.usuarioId);
+    }
+    const existe = idCompatible(Model, id) && (filtro._id === undefined || filtro._id === id)
+      && !!(await Model.exists({ ...filtro, _id: id }));
     const [etiqueta, genero] = ETIQUETAS[nombreModelo] || [nombreModelo, 'o'];
     const mensaje = existe
       ? `ID válido - ${etiqueta} encontrad${genero}`
@@ -277,18 +370,59 @@ app.get('/api/validaciones/:coleccion/:id', async (req, res, next) => {
 // RUTAS DE LA API RESTful
 // ==========================================
 
+app.post('/api/usuarios/login', async (req, res) => {
+  const { id, password, password_hash } = req.body ?? {};
+  const clave = password ?? password_hash;
+  const usuario = idCompatible(Usuario, id) && typeof clave === 'string' && clave.length <= 1024
+    ? await Usuario.findById(id).select('+password_hash')
+    : null;
+  const resultado = usuario && await verificarClave(clave, usuario.password_hash);
+  if (!resultado?.valida) throw new ApiError(401, 'Credenciales inválidas');
+
+  if (resultado.anterior) {
+    const hash = await protegerClave(clave);
+    const migracion = await Usuario.updateOne(
+      { _id: usuario._id, password_hash: usuario.password_hash },
+      { $set: { password_hash: hash } }
+    );
+    if (!migracion.matchedCount) throw new ApiError(401, 'Vuelve a iniciar sesión');
+    usuario.password_hash = hash;
+  }
+
+  const token = randomBytes(32).toString('hex');
+  const vence = new Date(Date.now() + DURACION_SESION_MS);
+  await Sesion.create({ _id: huella(token), usuario: usuario._id, credencial: huella(usuario.password_hash), vence });
+  res.set('Cache-Control', 'no-store');
+  res.status(200).json(responseFormat(true, 'Sesión iniciada', { token, vence }));
+});
+
+app.use('/api', (req, res, next) => {
+  const [, recurso, id] = req.path.toLowerCase().split('/');
+  const privados = ['usuarios', 'inventario', 'historial_inventario', 'patrones_predictivos', 'meal_preps', 'notificaciones'];
+  const catalogos = ['categorias', 'marcas', 'unidades_medida', 'productos', 'ingredientes'];
+  const altaUsuario = recurso === 'usuarios' && !id && req.method === 'POST';
+  const escritura = ['POST', 'PUT', 'DELETE'].includes(req.method);
+  if (altaUsuario || (!privados.includes(recurso) && !(escritura && catalogos.includes(recurso)))) return next();
+  return autenticar(req, res, next);
+});
+
+function usuarioPublico(usuario) {
+  const { _id, nombre, email } = usuario;
+  return { _id, nombre, email };
+}
+
 // 1. Usuarios
 app.post('/api/usuarios', async (req, res, next) => {
   try {
-    const { id, nombre, email, password_hash } = req.body;
+    const { id, nombre, email, password, password_hash } = req.body;
+    const clave = password ?? password_hash;
     const idAValidar = id || nombre;
 
     if (!/^\d+$/.test(idAValidar)) {
       return res.status(200).json(responseFormat(false, 'El ID del usuario debe ser un valor numérico.', null));
     }
 
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,}$/;
-    if (!passwordRegex.test(password_hash)) {
+    if (typeof clave !== 'string' || !CLAVE_SEGURA.test(clave)) {
       return res.status(200).json(responseFormat(false, 'La contraseña no cumple con los requisitos de seguridad (mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos).', null));
     }
 
@@ -297,9 +431,9 @@ app.post('/api/usuarios', async (req, res, next) => {
       return res.status(200).json(responseFormat(false, 'El ID, nombre de usuario o correo electrónico ya se encuentran registrados.', null));
     }
 
-    const nuevoUsuario = new Usuario({ _id: idAValidar, nombre, email, password_hash });
+    const nuevoUsuario = new Usuario({ _id: idAValidar, nombre, email, password_hash: await protegerClave(clave) });
     await nuevoUsuario.save();
-    res.status(200).json(responseFormat(true, 'Usuario creado exitosamente', nuevoUsuario));
+    res.status(200).json(responseFormat(true, 'Usuario creado exitosamente', usuarioPublico(nuevoUsuario)));
   } catch (error) {
     next(error);
   }
@@ -308,16 +442,11 @@ app.post('/api/usuarios', async (req, res, next) => {
 app.get('/api/usuarios', async (req, res, next) => {
   try {
     const { busqueda } = req.query;
-    let filtro = {};
+    const filtro = { _id: req.usuarioId };
 
     if (busqueda && busqueda.trim() !== '') {
-      filtro = {
-        $or: [
-          { _id: { $regex: busqueda, $options: 'i' } },
-          { nombre: { $regex: busqueda, $options: 'i' } },
-          { email: { $regex: busqueda, $options: 'i' } }
-        ]
-      };
+      const patron = busqueda.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filtro.$or = ['_id', 'nombre', 'email'].map(campo => ({ [campo]: { $regex: patron, $options: 'i' } }));
     }
 
     const usuarios = await Usuario.find(filtro);
@@ -334,6 +463,7 @@ app.get('/api/usuarios', async (req, res, next) => {
 
 app.get('/api/usuarios/:id', async (req, res, next) => {
   try {
+    exigirPropietario(req.usuarioId, req.params.id);
     const usuario = await obtenerOFallar(Usuario, req.params.id);
     res.status(200).json(responseFormat(true, 'Usuario obtenido exitosamente', usuario));
   } catch (error) {
@@ -344,7 +474,9 @@ app.get('/api/usuarios/:id', async (req, res, next) => {
 app.put('/api/usuarios/:id', async (req, res, next) => {
   try {
     const usuarioId = req.params.id;
-    const { nombre, email, password_hash } = req.body;
+    const { nombre, email, password, password_hash } = req.body;
+    const clave = password ?? password_hash;
+    exigirPropietario(req.usuarioId, usuarioId);
 
     await obtenerOFallar(Usuario, usuarioId);
 
@@ -361,9 +493,8 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
       }
     }
 
-    if (password_hash) {
-      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,}$/;
-      if (!passwordRegex.test(password_hash)) {
+    if (clave !== undefined) {
+      if (typeof clave !== 'string' || !CLAVE_SEGURA.test(clave)) {
         return res.status(200).json(responseFormat(false, 'La nueva contraseña no cumple con los requisitos de seguridad.', null));
       }
     }
@@ -371,9 +502,9 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
     const datosActualizados = {};
     if (nombre) datosActualizados.nombre = nombre;
     if (email) datosActualizados.email = email;
-    if (password_hash) datosActualizados.password_hash = password_hash;
+    if (clave !== undefined) datosActualizados.password_hash = await protegerClave(clave);
 
-    const usuarioActualizado = await Usuario.findByIdAndUpdate(usuarioId, datosActualizados, { new: true, runValidators: true });
+    const usuarioActualizado = await Usuario.findByIdAndUpdate(usuarioId, datosActualizados, { returnDocument: 'after', runValidators: true });
     res.status(200).json(responseFormat(true, 'Usuario actualizado exitosamente', usuarioActualizado));
   } catch (error) {
     next(error);
@@ -381,13 +512,11 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
 });
 
 // Eliminación restringida: bloqueada (409) si el usuario tiene inventario, patrones o notificaciones
-app.delete('/api/usuarios/:id', async (req, res, next) => {
-  try {
-    const usuarioEliminado = await eliminarPorId(Usuario, req.params.id);
-    res.status(200).json(responseFormat(true, 'Usuario eliminado exitosamente', usuarioEliminado));
-  } catch (error) {
-    next(error);
-  }
+mutacion('delete', '/api/usuarios/:id', async req => {
+  exigirPropietario(req.usuarioId, req.params.id);
+  const usuarioEliminado = await eliminarPorId(Usuario, req.params.id);
+  await Sesion.deleteMany({ usuario: req.usuarioId });
+  return responseFormat(true, 'Usuario eliminado exitosamente', usuarioEliminado);
 });
 
 // 2. Categorías
@@ -419,13 +548,9 @@ app.get('/api/categorias/:id', async (req, res, next) => {
   }
 });
 
-app.delete('/api/categorias/:id', async (req, res, next) => {
-  try {
-    const categoriaEliminada = await eliminarPorId(Categoria, req.params.id);
-    res.status(200).json(responseFormat(true, 'Categoría eliminada exitosamente', categoriaEliminada));
-  } catch (error) {
-    next(error);
-  }
+mutacion('delete', '/api/categorias/:id', async req => {
+  const categoriaEliminada = await eliminarPorId(Categoria, req.params.id);
+  return responseFormat(true, 'Categoría eliminada exitosamente', categoriaEliminada);
 });
 
 // 3. Marcas
@@ -457,13 +582,9 @@ app.get('/api/marcas/:id', async (req, res, next) => {
   }
 });
 
-app.delete('/api/marcas/:id', async (req, res, next) => {
-  try {
-    const marcaEliminada = await eliminarPorId(Marca, req.params.id);
-    res.status(200).json(responseFormat(true, 'Marca eliminada exitosamente', marcaEliminada));
-  } catch (error) {
-    next(error);
-  }
+mutacion('delete', '/api/marcas/:id', async req => {
+  const marcaEliminada = await eliminarPorId(Marca, req.params.id);
+  return responseFormat(true, 'Marca eliminada exitosamente', marcaEliminada);
 });
 
 // 4. Unidades de Medida
@@ -495,26 +616,18 @@ app.get('/api/unidades_medida/:id', async (req, res, next) => {
   }
 });
 
-app.delete('/api/unidades_medida/:id', async (req, res, next) => {
-  try {
-    const unidadEliminada = await eliminarPorId(UnidadMedida, req.params.id);
-    res.status(200).json(responseFormat(true, 'Unidad de medida eliminada exitosamente', unidadEliminada));
-  } catch (error) {
-    next(error);
-  }
+mutacion('delete', '/api/unidades_medida/:id', async req => {
+  const unidadEliminada = await eliminarPorId(UnidadMedida, req.params.id);
+  return responseFormat(true, 'Unidad de medida eliminada exitosamente', unidadEliminada);
 });
 
 // 5. Productos
-app.post('/api/productos', async (req, res, next) => {
-  try {
-    const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
-    await validarReferencias(Producto, { marca_nombre, categoria_nombre });
-    const nuevoProducto = new Producto({ _id, marca_nombre, categoria_nombre, nombre });
-    await nuevoProducto.save();
-    res.status(200).json(responseFormat(true, 'Producto creado exitosamente', nuevoProducto));
-  } catch (error) {
-    next(error);
-  }
+mutacion('post', '/api/productos', async req => {
+  const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
+  await validarReferencias(Producto, { marca_nombre, categoria_nombre });
+  const nuevoProducto = new Producto({ _id, marca_nombre, categoria_nombre, nombre });
+  await nuevoProducto.save();
+  return responseFormat(true, 'Producto creado exitosamente', nuevoProducto);
 });
 
 app.get('/api/productos', async (req, res, next) => {
@@ -548,68 +661,106 @@ app.get('/api/productos/:id', async (req, res, next) => {
   }
 });
 
-app.delete('/api/productos/:id', async (req, res, next) => {
-  try {
-    const productoEliminado = await eliminarPorId(Producto, req.params.id);
-    res.status(200).json(responseFormat(true, 'Producto eliminado exitosamente', productoEliminado));
-  } catch (error) {
-    next(error);
-  }
+mutacion('delete', '/api/productos/:id', async req => {
+  const productoEliminado = await eliminarPorId(Producto, req.params.id);
+  return responseFormat(true, 'Producto eliminado exitosamente', productoEliminado);
 });
 
 // 6. Inventario (Con acumulación inteligente si ya existe)
-app.post('/api/inventario', async (req, res, next) => {
-  try {
-    const { user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado } = req.body;
+function fechaInventario(valor) {
+  if (typeof valor !== 'string' || !valor.trim()) throw new ApiError(400, 'Envía una fecha válida');
+  const fecha = new Date(valor);
+  if (!Number.isFinite(fecha.getTime())) throw new ApiError(400, 'Envía una fecha válida');
+  return fecha;
+}
 
-    await validarReferencias(Inventario, { user_nombre, producto_id, unidad_medida_nombre });
-
-    let itemInventario = await Inventario.findOne({
-      user_nombre,
-      nevera_id,
-      producto_id,
-      estado: estado || 'EN_NEVERA'
-    });
-
-    if (itemInventario) {
-      itemInventario.cantidad += Number(cantidad);
-      await itemInventario.save();
-
-      await HistorialInventario.create({
-        inventario_id: itemInventario._id,
-        snapshot_datos: itemInventario.toObject(),
-        accion: 'ACTUALIZADO',
-        detalles: `Se sumaron ${cantidad} unidades al producto existente en la nevera ${nevera_id}`
-      });
-
-      return res.status(200).json(responseFormat(true, 'El producto ya existía en la nevera; se actualizó la cantidad acumulada.', itemInventario));
-    }
-
-    const nuevoItem = new Inventario({ user_nombre, nevera_id, producto_id, unidad_medida_nombre, cantidad, fecha_vencimiento, estado });
-    await nuevoItem.save();
-
-    await HistorialInventario.create({
-      inventario_id: nuevoItem._id,
-      snapshot_datos: nuevoItem.toObject(),
-      accion: 'CREADO',
-      detalles: `Se agregó el alimento a la nevera ${nuevoItem.nevera_id} del usuario ${nuevoItem.user_nombre}`
-    });
-
-    res.status(200).json(responseFormat(true, 'Alimento agregado al inventario', nuevoItem));
-  } catch (error) {
-    next(error);
+function paginar(consulta, { pagina, limite }) {
+  if (pagina === undefined && limite === undefined) return consulta;
+  const numero = Number(pagina ?? 1);
+  const cantidad = Number(limite ?? 25);
+  const salto = (numero - 1) * cantidad;
+  if (!Number.isSafeInteger(numero) || numero < 1 || !Number.isInteger(cantidad) ||
+      cantidad < 1 || cantidad > 100 || !Number.isSafeInteger(salto)) {
+    throw new ApiError(400, 'La página debe ser positiva y el límite debe estar entre 1 y 100');
   }
+  return consulta.skip(salto).limit(cantidad);
+}
+
+function registrarHistorial(item, accion, detalles) {
+  const { alerta_vencimiento_generada, ...snapshot } = item.toObject();
+  return HistorialInventario.create({
+    inventario_id: item._id, snapshot_datos: snapshot, accion, detalles
+  });
+}
+
+mutacion('post', '/api/inventario', async req => {
+  const {
+    user_nombre, nevera_id = NEVERA_PREDETERMINADA, producto_id, unidad_medida_nombre,
+    cantidad, fecha_vencimiento, estado = 'EN_NEVERA'
+  } = req.body;
+  exigirPropietario(req.usuarioId, user_nombre);
+  const lote = {
+    user_nombre: req.usuarioId,
+    nevera_id,
+    producto_id,
+    unidad_medida_nombre,
+    fecha_vencimiento: fecha_vencimiento == null ? null : fechaInventario(fecha_vencimiento),
+    estado
+  };
+  await validarReferencias(Inventario, lote);
+  const entrada = new Inventario({ ...lote, cantidad });
+  await entrada.validate();
+  const itemInventario = await Inventario.findOne(lote).sort({ _id: 1 });
+
+  if (itemInventario) {
+    itemInventario.cantidad += entrada.cantidad;
+    await itemInventario.save();
+
+    await registrarHistorial(itemInventario, 'ACTUALIZADO',
+      `Se sumaron ${entrada.cantidad} unidades al lote de la nevera ${nevera_id}`);
+
+    return responseFormat(true, 'El producto ya existía en la nevera; se actualizó la cantidad acumulada.', itemInventario);
+  }
+
+  const nuevoItem = await entrada.save();
+  await registrarHistorial(nuevoItem, 'CREADO', `Se agregó el alimento a la nevera ${nevera_id}`);
+
+  return responseFormat(true, 'Alimento agregado al inventario', nuevoItem);
 });
 
 app.get('/api/inventario', async (req, res, next) => {
   try {
-    const filtro = {};
-    if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
-    if (req.query.nevera_id) filtro.nevera_id = req.query.nevera_id;
-
-    await validarReferencias(Inventario, filtro);
-
-    const inventarios = await Inventario.find(filtro).lean();
+    const { user_nombre, nevera_id, estado, vence_desde, vence_hasta, orden } = req.query;
+    exigirPropietario(req.usuarioId, user_nombre);
+    const filtro = { user_nombre: req.usuarioId };
+    if (nevera_id !== undefined) {
+      if (typeof nevera_id !== 'string' || !nevera_id.trim()) throw new ApiError(400, 'Envía una nevera válida');
+      filtro.nevera_id = nevera_id;
+    }
+    if (estado !== undefined) {
+      if (!ESTADOS_INVENTARIO.includes(estado)) throw new ApiError(400, 'Estado de inventario inválido');
+      filtro.estado = estado;
+    }
+    if (vence_desde !== undefined || vence_hasta !== undefined) {
+      filtro.fecha_vencimiento = {};
+      if (vence_desde !== undefined) filtro.fecha_vencimiento.$gte = fechaInventario(vence_desde);
+      if (vence_hasta !== undefined) filtro.fecha_vencimiento.$lte = fechaInventario(vence_hasta);
+      if (filtro.fecha_vencimiento.$gte > filtro.fecha_vencimiento.$lte) {
+        throw new ApiError(400, 'El inicio del rango debe ser anterior a su fin');
+      }
+    }
+    if (orden !== undefined && orden !== 'vencimiento') throw new ApiError(400, 'Orden inválido');
+    if (orden === 'vencimiento') {
+      const consulta = Inventario.aggregate([
+        { $match: filtro },
+        { $set: { sin_vencimiento: { $eq: [{ $ifNull: ['$fecha_vencimiento', null] }, null] } } },
+        { $sort: { sin_vencimiento: 1, fecha_vencimiento: 1, _id: 1 } },
+        { $unset: ['sin_vencimiento', 'alerta_vencimiento_generada'] }
+      ]);
+      const inventarios = await paginar(consulta, req.query);
+      return res.status(200).json(responseFormat(true, 'Lista de inventario obtenida', inventarios));
+    }
+    const inventarios = await paginar(Inventario.find(filtro).sort({ _id: 1 }).lean(), req.query);
     res.status(200).json(responseFormat(true, 'Lista de inventario obtenida', inventarios));
   } catch (error) {
     next(error);
@@ -618,56 +769,46 @@ app.get('/api/inventario', async (req, res, next) => {
 
 app.get('/api/inventario/:itemId', async (req, res, next) => {
   try {
-    const item = await obtenerOFallar(Inventario, req.params.itemId);
+    const item = await obtenerOFallar(Inventario, req.params.itemId, { user_nombre: req.usuarioId });
     res.status(200).json(responseFormat(true, 'Detalle del alimento obtenido', item));
   } catch (error) {
     next(error);
   }
 });
 
-app.put('/api/inventario/:itemId', async (req, res, next) => {
-  try {
-    const { _id, ...cambios } = req.body;
+mutacion('put', '/api/inventario/:itemId', async req => {
+  exigirPropietario(req.usuarioId, req.body.user_nombre);
+  const campos = ['nevera_id', 'producto_id', 'unidad_medida_nombre', 'cantidad', 'fecha_vencimiento', 'estado'];
+  const cambios = Object.fromEntries(campos.filter(campo => Object.hasOwn(req.body, campo))
+    .map(campo => [campo, req.body[campo]]));
+  if (cambios.fecha_vencimiento != null) cambios.fecha_vencimiento = fechaInventario(cambios.fecha_vencimiento);
+  const filtro = { user_nombre: req.usuarioId };
+  await obtenerOFallar(Inventario, req.params.itemId, filtro);
+  await validarReferencias(Inventario, cambios);
 
-    await obtenerOFallar(Inventario, req.params.itemId);
-    await validarReferencias(Inventario, cambios);
+  const itemActualizado = await Inventario.findOneAndUpdate(
+    { ...filtro, _id: req.params.itemId }, { $set: cambios }, { returnDocument: 'after', runValidators: true }
+  );
 
-    const itemActualizado = await Inventario.findByIdAndUpdate(req.params.itemId, cambios, { new: true, runValidators: true });
+  await registrarHistorial(itemActualizado, 'ACTUALIZADO',
+    `Se actualizó el alimento de la nevera ${itemActualizado.nevera_id}`);
 
-    await HistorialInventario.create({
-      inventario_id: itemActualizado._id,
-      snapshot_datos: itemActualizado.toObject(),
-      accion: 'ACTUALIZADO',
-      detalles: `Se actualizó el alimento del usuario ${itemActualizado.user_nombre}`
-    });
-
-    res.status(200).json(responseFormat(true, 'Alimento actualizado exitosamente', itemActualizado));
-  } catch (error) {
-    next(error);
-  }
+  return responseFormat(true, 'Alimento actualizado exitosamente', itemActualizado);
 });
 
-app.delete('/api/inventario/:itemId', async (req, res, next) => {
-  try {
-    const itemEliminado = await eliminarPorId(Inventario, req.params.itemId);
+mutacion('delete', '/api/inventario/:itemId', async req => {
+  const itemEliminado = await eliminarPorId(Inventario, req.params.itemId, { user_nombre: req.usuarioId });
 
-    await HistorialInventario.create({
-      inventario_id: itemEliminado._id,
-      snapshot_datos: itemEliminado.toObject(),
-      accion: 'ELIMINADO',
-      detalles: `Se eliminó físicamente el alimento del inventario`
-    });
+  await registrarHistorial(itemEliminado, 'ELIMINADO', 'Se eliminó físicamente el alimento del inventario');
 
-    res.status(200).json(responseFormat(true, 'Alimento eliminado exitosamente', itemEliminado));
-  } catch (error) {
-    next(error);
-  }
+  return responseFormat(true, 'Alimento eliminado exitosamente', itemEliminado);
 });
 
 // 7. Historial de Inventario
 app.get('/api/historial_inventario', async (req, res, next) => {
   try {
-    const historial = await HistorialInventario.find().lean();
+    const filtro = await filtroPropietario(HistorialInventario, req.usuarioId);
+    const historial = await paginar(HistorialInventario.find(filtro).sort({ fecha: -1, _id: -1 }).lean(), req.query);
     res.status(200).json(responseFormat(true, 'Historial de inventario obtenido', historial));
   } catch (error) {
     next(error);
@@ -676,7 +817,8 @@ app.get('/api/historial_inventario', async (req, res, next) => {
 
 app.get('/api/historial_inventario/:id', async (req, res, next) => {
   try {
-    const registro = await obtenerOFallar(HistorialInventario, req.params.id);
+    const registro = await obtenerOFallar(HistorialInventario, req.params.id,
+      await filtroPropietario(HistorialInventario, req.usuarioId));
     res.status(200).json(responseFormat(true, 'Registro de historial obtenido', registro));
   } catch (error) {
     next(error);
@@ -684,23 +826,19 @@ app.get('/api/historial_inventario/:id', async (req, res, next) => {
 });
 
 // 8. Patrones Predictivos
-app.post('/api/patrones_predictivos', async (req, res, next) => {
-  try {
-    const { _id, user_nombre, frecuencia_compra_dias, probabilidad_desperdicio } = req.body;
-    await validarReferencias(PatronPredictivo, { user_nombre });
-    const nuevoPatron = new PatronPredictivo({ _id, user_nombre, frecuencia_compra_dias, probabilidad_desperdicio });
-    await nuevoPatron.save();
-    res.status(200).json(responseFormat(true, 'Patrón predictivo creado exitosamente', nuevoPatron));
-  } catch (error) {
-    next(error);
-  }
+mutacion('post', '/api/patrones_predictivos', async req => {
+  const { _id, user_nombre, frecuencia_compra_dias, probabilidad_desperdicio } = req.body;
+  exigirPropietario(req.usuarioId, user_nombre);
+  await validarReferencias(PatronPredictivo, { user_nombre: req.usuarioId });
+  const nuevoPatron = new PatronPredictivo({ _id, user_nombre: req.usuarioId, frecuencia_compra_dias, probabilidad_desperdicio });
+  await nuevoPatron.save();
+  return responseFormat(true, 'Patrón predictivo creado exitosamente', nuevoPatron);
 });
 
 app.get('/api/patrones_predictivos', async (req, res, next) => {
   try {
-    const filtro = {};
-    if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
-    await validarReferencias(PatronPredictivo, filtro);
+    exigirPropietario(req.usuarioId, req.query.user_nombre);
+    const filtro = { user_nombre: req.usuarioId };
     const patrones = await PatronPredictivo.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Patrones predictivos obtenidos', patrones));
   } catch (error) {
@@ -710,7 +848,7 @@ app.get('/api/patrones_predictivos', async (req, res, next) => {
 
 app.get('/api/patrones_predictivos/:id', async (req, res, next) => {
   try {
-    const patron = await obtenerOFallar(PatronPredictivo, req.params.id);
+    const patron = await obtenerOFallar(PatronPredictivo, req.params.id, { user_nombre: req.usuarioId });
     res.status(200).json(responseFormat(true, 'Patrón predictivo obtenido', patron));
   } catch (error) {
     next(error);
@@ -718,13 +856,9 @@ app.get('/api/patrones_predictivos/:id', async (req, res, next) => {
 });
 
 // Bloqueada (409) si algún plan de comidas usa este patrón
-app.delete('/api/patrones_predictivos/:id', async (req, res, next) => {
-  try {
-    const patronEliminado = await eliminarPorId(PatronPredictivo, req.params.id);
-    res.status(200).json(responseFormat(true, 'Patrón predictivo eliminado exitosamente', patronEliminado));
-  } catch (error) {
-    next(error);
-  }
+mutacion('delete', '/api/patrones_predictivos/:id', async req => {
+  const patronEliminado = await eliminarPorId(PatronPredictivo, req.params.id, { user_nombre: req.usuarioId });
+  return responseFormat(true, 'Patrón predictivo eliminado exitosamente', patronEliminado);
 });
 
 // 9. Ingredientes
@@ -756,34 +890,31 @@ app.get('/api/ingredientes/:id', async (req, res, next) => {
   }
 });
 
-app.delete('/api/ingredientes/:id', async (req, res, next) => {
-  try {
-    const ingredienteEliminado = await eliminarPorId(Ingrediente, req.params.id);
-    res.status(200).json(responseFormat(true, 'Ingrediente eliminado exitosamente', ingredienteEliminado));
-  } catch (error) {
-    next(error);
-  }
+mutacion('delete', '/api/ingredientes/:id', async req => {
+  const ingredienteEliminado = await eliminarPorId(Ingrediente, req.params.id);
+  return responseFormat(true, 'Ingrediente eliminado exitosamente', ingredienteEliminado);
 });
 
 // 10. Meal Preps
-app.post('/api/meal_preps', async (req, res, next) => {
+mutacion('post', '/api/meal_preps', async req => {
   try {
     const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
     await validarReferencias(MealPrep, { patron_predictivo_id, ingrediente_nombre });
+    await obtenerOFallar(PatronPredictivo, patron_predictivo_id, { user_nombre: req.usuarioId });
     const nuevoMealPrep = new MealPrep({ patron_predictivo_id, ingrediente_nombre, nombre_receta });
     await nuevoMealPrep.save();
-    res.status(200).json(responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep));
+    return responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep);
   } catch (error) {
     if (error.code === 11000) {
-      return res.status(200).json(responseFormat(false, 'Ya existe un plan de comidas asociado a este patrón predictivo.', null));
+      throw new ApiError(200, 'Ya existe un plan de comidas asociado a este patrón predictivo.');
     }
-    next(error);
+    throw error;
   }
 });
 
 app.get('/api/meal_preps', async (req, res, next) => {
   try {
-    const mealPreps = await MealPrep.find().lean();
+    const mealPreps = await MealPrep.find(await filtroPropietario(MealPrep, req.usuarioId)).lean();
     res.status(200).json(responseFormat(true, 'Lista de planes obtenida', mealPreps));
   } catch (error) {
     next(error);
@@ -792,40 +923,32 @@ app.get('/api/meal_preps', async (req, res, next) => {
 
 app.get('/api/meal_preps/:id', async (req, res, next) => {
   try {
-    const mealPrep = await obtenerOFallar(MealPrep, req.params.id);
+    const mealPrep = await obtenerOFallar(MealPrep, req.params.id, await filtroPropietario(MealPrep, req.usuarioId));
     res.status(200).json(responseFormat(true, 'Plan obtenido', mealPrep));
   } catch (error) {
     next(error);
   }
 });
 
-app.delete('/api/meal_preps/:id', async (req, res, next) => {
-  try {
-    const mealPrepEliminado = await eliminarPorId(MealPrep, req.params.id);
-    res.status(200).json(responseFormat(true, 'Plan eliminado exitosamente', mealPrepEliminado));
-  } catch (error) {
-    next(error);
-  }
+mutacion('delete', '/api/meal_preps/:id', async req => {
+  const mealPrepEliminado = await eliminarPorId(MealPrep, req.params.id, await filtroPropietario(MealPrep, req.usuarioId));
+  return responseFormat(true, 'Plan eliminado exitosamente', mealPrepEliminado);
 });
 
 // 11. Notificaciones
-app.post('/api/notificaciones', async (req, res, next) => {
-  try {
-    const { user_nombre, mensaje, tipo, leida } = req.body;
-    await validarReferencias(Notificacion, { user_nombre });
-    const nuevaNoti = new Notificacion({ user_nombre, mensaje, tipo, leida });
-    await nuevaNoti.save();
-    res.status(200).json(responseFormat(true, 'Notificación creada exitosamente', nuevaNoti));
-  } catch (error) {
-    next(error);
-  }
+mutacion('post', '/api/notificaciones', async req => {
+  const { user_nombre, mensaje, tipo, leida } = req.body;
+  exigirPropietario(req.usuarioId, user_nombre);
+  await validarReferencias(Notificacion, { user_nombre: req.usuarioId });
+  const nuevaNoti = new Notificacion({ user_nombre: req.usuarioId, mensaje, tipo, leida });
+  await nuevaNoti.save();
+  return responseFormat(true, 'Notificación creada exitosamente', nuevaNoti);
 });
 
 app.get('/api/notificaciones', async (req, res, next) => {
   try {
-    const filtro = {};
-    if (req.query.user_nombre) filtro.user_nombre = req.query.user_nombre;
-    await validarReferencias(Notificacion, filtro);
+    exigirPropietario(req.usuarioId, req.query.user_nombre);
+    const filtro = { user_nombre: req.usuarioId };
     const notificaciones = await Notificacion.find(filtro).lean();
     res.status(200).json(responseFormat(true, 'Notificaciones obtenidas', notificaciones));
   } catch (error) {
@@ -835,20 +958,16 @@ app.get('/api/notificaciones', async (req, res, next) => {
 
 app.get('/api/notificaciones/:id', async (req, res, next) => {
   try {
-    const notificacion = await obtenerOFallar(Notificacion, req.params.id);
+    const notificacion = await obtenerOFallar(Notificacion, req.params.id, { user_nombre: req.usuarioId });
     res.status(200).json(responseFormat(true, 'Notificación obtenida', notificacion));
   } catch (error) {
     next(error);
   }
 });
 
-app.delete('/api/notificaciones/:id', async (req, res, next) => {
-  try {
-    const notiEliminada = await eliminarPorId(Notificacion, req.params.id);
-    res.status(200).json(responseFormat(true, 'Notificación eliminada', notiEliminada));
-  } catch (error) {
-    next(error);
-  }
+mutacion('delete', '/api/notificaciones/:id', async req => {
+  const notiEliminada = await eliminarPorId(Notificacion, req.params.id, { user_nombre: req.usuarioId });
+  return responseFormat(true, 'Notificación eliminada', notiEliminada);
 });
 
 // ==========================================
@@ -871,6 +990,51 @@ app.use((err, req, res, next) => {
   const message = status === 500 ? 'Error interno del servidor' : err.message;
   res.status(status).json(responseFormat(false, message));
 });
+
+const HORA_MS = 60 * 60 * 1000;
+async function generarAlertasVencimiento() {
+  const ahora = new Date();
+  const filtro = {
+    estado: 'EN_NEVERA',
+    cantidad: { $gt: 0 },
+    fecha_vencimiento: { $gte: ahora, $lte: new Date(ahora.getTime() + 72 * HORA_MS) },
+    $expr: { $ne: [{ $ifNull: ['$alerta_vencimiento_generada', null] }, '$fecha_vencimiento'] }
+  };
+  const pendientes = Inventario.find(filtro).select('_id').lean().cursor();
+  for await (const { _id } of pendientes) {
+    await enTransaccion(async () => {
+      const item = await Inventario.findOneAndUpdate(
+        { ...filtro, _id },
+        [{ $set: { alerta_vencimiento_generada: '$fecha_vencimiento' } }],
+        { returnDocument: 'after', updatePipeline: true }
+      );
+      if (!item) return;
+      const producto = await Producto.findById(item.producto_id).select('nombre').lean();
+      await Notificacion.create({
+        user_nombre: item.user_nombre,
+        nevera_id: item.nevera_id,
+        inventario_id: item._id,
+        tipo: 'VENCIMIENTO',
+        mensaje: `${producto?.nombre ?? item.producto_id} vence el ${item.fecha_vencimiento.toISOString()} en la nevera ${item.nevera_id}.`
+      });
+    });
+  }
+}
+
+function iniciarAlertas() {
+  async function revisar() {
+    try {
+      await generarAlertasVencimiento();
+    } catch (error) {
+      console.error('No se pudieron generar las alertas de vencimiento:', error.message);
+    } finally {
+      setTimeout(revisar, HORA_MS).unref();
+    }
+  }
+  void revisar();
+}
+
+conexion.then(iniciarAlertas).catch(() => {});
 
 // Inicialización del Servidor
 const PORT = process.env.PORT || 3000;

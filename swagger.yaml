@@ -9,8 +9,13 @@ info:
     - **Restricción al eliminar (409):** un recurso no puede eliminarse mientras otros registros lo referencien. La API responde `409` con el mensaje *"No se puede eliminar el registro porque está siendo utilizado en otros registros del sistema"* e indica en `data.dependencias` qué colecciones lo usan.
     - El historial de inventario es una bitácora y no bloquea eliminaciones.
     - **Validación en vivo:** al pulsar *Try it out*, los campos de ID (ruta, query y campos foráneos del body) se validan mientras se escriben o al salir del campo, sin presionar *Execute* (✅ / ❌ bajo el campo).
-  version: '1.1.0'
+    **Autenticación:** usa `POST /api/usuarios/login` y pega `data.token` en **Authorize**. Las rutas privadas solo muestran los datos de la sesión. Los catálogos tienen lectura pública y requieren sesión para modificar datos.
+
+    **Inventario:** la API acumula únicamente productos con el mismo usuario, nevera, unidad, estado y vencimiento. Si omites la nevera al crear, se usa NEVERA-01. Las alertas se revisan al iniciar el servidor y cada hora mientras está activo, para lotes en nevera que vencen en las próximas 72 horas.
+  version: '1.2.0'
 servers:
+  - url: /
+    description: Servidor desde el que se abrió Swagger
   - url: https://nevera-inteligente-api.onrender.com
     description: Servidor de producción en Render (Nube)
   - url: http://localhost:3000
@@ -20,6 +25,45 @@ paths:
   # ==========================================
   # 1. MÓDULO DE USUARIOS
   # ==========================================
+  /api/usuarios/login:
+    post:
+      tags: [Usuarios]
+      operationId: loginUser
+      summary: Iniciar sesión y obtener un token Bearer de 24 horas
+      description: Copia data.token y pégalo en el botón Authorize de Swagger.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, password]
+              properties:
+                id:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Sesión iniciada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                success: true
+                message: Sesión iniciada
+                data:
+                  token: token-de-sesion
+                  vence: '2026-11-20T12:00:00Z'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
   /api/usuarios:
     post:
       tags: [Usuarios]
@@ -39,9 +83,11 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
     get:
+      security:
+        - bearerAuth: []
       tags: [Usuarios]
       operationId: listUsers
-      summary: Listar o filtrar usuarios por ID, nombre o correo
+      summary: Consultar el perfil de la sesión en formato de lista
       parameters:
         - name: busqueda
           in: query
@@ -54,11 +100,15 @@ paths:
           $ref: '#/components/responses/Ok'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   /api/usuarios/{id}:
     parameters:
       - $ref: '#/components/parameters/UsuarioIdPath'
     get:
+      security:
+        - bearerAuth: []
       tags: [Usuarios]
       operationId: getUserById
       summary: Consultar un usuario individual por su ID
@@ -67,7 +117,13 @@ paths:
           $ref: '#/components/responses/OkWithLookup'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
     put:
+      security:
+        - bearerAuth: []
       tags: [Usuarios]
       operationId: updateUser
       summary: Actualizar un usuario (Nombre, correo o contraseña con validación de seguridad)
@@ -84,7 +140,13 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Usuarios]
       operationId: deleteUser
       summary: Eliminar un usuario (Bloqueado si tiene inventario, patrones predictivos o notificaciones)
@@ -95,12 +157,18 @@ paths:
           $ref: '#/components/responses/Conflict'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   # ==========================================
   # 2. MÓDULO DE CATEGORÍAS
   # ==========================================
   /api/categorias:
     post:
+      security:
+        - bearerAuth: []
       tags: [Categorías]
       operationId: createCategory
       summary: Crear una nueva categoría de alimentos
@@ -117,6 +185,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
     get:
       tags: [Categorías]
       operationId: listCategories
@@ -140,6 +210,8 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Categorías]
       operationId: deleteCategory
       summary: Eliminar categoría (Bloqueada si tiene productos asociados)
@@ -150,12 +222,16 @@ paths:
           $ref: '#/components/responses/Conflict'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ==========================================
   # 3. MÓDULO DE MARCAS
   # ==========================================
   /api/marcas:
     post:
+      security:
+        - bearerAuth: []
       tags: [Marcas]
       operationId: createBrand
       summary: Crear una nueva marca
@@ -172,6 +248,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
     get:
       tags: [Marcas]
       operationId: listBrands
@@ -195,6 +273,8 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Marcas]
       operationId: deleteBrand
       summary: Eliminar marca (Bloqueada si tiene productos asociados)
@@ -205,12 +285,16 @@ paths:
           $ref: '#/components/responses/Conflict'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ==========================================
   # 4. MÓDULO DE UNIDADES DE MEDIDA
   # ==========================================
   /api/unidades_medida:
     post:
+      security:
+        - bearerAuth: []
       tags: [Unidades de Medida]
       operationId: createUnit
       summary: Crear una nueva unidad de medida
@@ -227,6 +311,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
     get:
       tags: [Unidades de Medida]
       operationId: listUnits
@@ -250,6 +336,8 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Unidades de Medida]
       operationId: deleteUnit
       summary: Eliminar unidad (Bloqueada si está en uso en el inventario)
@@ -260,12 +348,16 @@ paths:
           $ref: '#/components/responses/Conflict'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ==========================================
   # 5. MÓDULO DE INGREDIENTES
   # ==========================================
   /api/ingredientes:
     post:
+      security:
+        - bearerAuth: []
       tags: [Ingredientes]
       operationId: createIngredient
       summary: Crear un nuevo ingrediente base
@@ -282,6 +374,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
     get:
       tags: [Ingredientes]
       operationId: listIngredients
@@ -305,6 +399,8 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Ingredientes]
       operationId: deleteIngredient
       summary: Eliminar ingrediente (Bloqueado si está en un Meal Prep)
@@ -315,12 +411,16 @@ paths:
           $ref: '#/components/responses/Conflict'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ==========================================
   # 6. MÓDULO DE PRODUCTOS
   # ==========================================
   /api/productos:
     post:
+      security:
+        - bearerAuth: []
       tags: [Productos]
       operationId: createProduct
       summary: Crear un nuevo producto comercial (Valida en tiempo real marca y categoría)
@@ -337,6 +437,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
     get:
       tags: [Productos]
       operationId: listProducts
@@ -360,6 +462,8 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Productos]
       operationId: deleteProduct
       summary: Eliminar producto (Bloqueado si está en el inventario)
@@ -370,12 +474,16 @@ paths:
           $ref: '#/components/responses/Conflict'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ==========================================
   # 7. MÓDULO DE INVENTARIO
   # ==========================================
   /api/inventario:
     post:
+      security:
+        - bearerAuth: []
       tags: [Inventario]
       operationId: addInventoryItem
       summary: Agregar alimento a la nevera o acumular cantidad (Valida usuario, producto y unidad)
@@ -392,10 +500,16 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
     get:
+      security:
+        - bearerAuth: []
       tags: [Inventario]
       operationId: listInventoryItems
-      summary: Listar inventario (Filtrable por usuario y nevera)
+      summary: Listar los lotes de inventario del usuario
       parameters:
         - $ref: '#/components/parameters/UsuarioIdQuery'
         - name: nevera_id
@@ -404,16 +518,41 @@ paths:
           schema:
             type: string
             example: NEVERA-01
+        - name: estado
+          in: query
+          schema:
+            type: string
+            enum: [EN_NEVERA, CONSUMIDO, DESPERDICIADO]
+        - name: vence_desde
+          in: query
+          schema: { type: string, format: date-time }
+        - name: vence_hasta
+          in: query
+          schema: { type: string, format: date-time }
+        - name: orden
+          in: query
+          schema: { type: string, enum: [vencimiento] }
+          description: Orden ascendente por vencimiento, con los lotes sin fecha al final.
+        - $ref: '#/components/parameters/PaginaQuery'
+        - $ref: '#/components/parameters/LimiteQuery'
       responses:
         "200":
-          $ref: '#/components/responses/OkWithLookup'
+          $ref: '#/components/responses/Ok'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "400":
+          $ref: '#/components/responses/BadRequest'
 
   /api/inventario/{itemId}:
     parameters:
       - $ref: '#/components/parameters/InventarioIdPath'
     get:
+      security:
+        - bearerAuth: []
       tags: [Inventario]
       operationId: getInventoryItem
       summary: Consultar detalle de un alimento por ID
@@ -422,7 +561,11 @@ paths:
           $ref: '#/components/responses/OkWithLookup'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
     put:
+      security:
+        - bearerAuth: []
       tags: [Inventario]
       operationId: updateInventoryItem
       summary: Actualizar alimento del inventario (Valida los IDs enviados) y registrar en historial
@@ -439,7 +582,13 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Inventario]
       operationId: deleteInventoryItem
       summary: Eliminar alimento del inventario y guardar snapshot en historial
@@ -450,25 +599,38 @@ paths:
           $ref: '#/components/responses/Conflict'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ==========================================
   # 8. MÓDULO DE HISTORIAL DE INVENTARIO
   # ==========================================
   /api/historial_inventario:
     get:
+      security:
+        - bearerAuth: []
       tags: [Historial de Inventario]
       operationId: listInventoryHistory
       summary: Listar bitácora de cambios con respaldo (snapshot)
+      parameters:
+        - $ref: '#/components/parameters/PaginaQuery'
+        - $ref: '#/components/parameters/LimiteQuery'
       responses:
         "200":
           $ref: '#/components/responses/Ok'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "400":
+          $ref: '#/components/responses/BadRequest'
 
   /api/historial_inventario/{id}:
     parameters:
       - $ref: '#/components/parameters/HistorialIdPath'
     get:
+      security:
+        - bearerAuth: []
       tags: [Historial de Inventario]
       operationId: getHistoryById
       summary: Consultar registro individual del historial por ID
@@ -477,12 +639,16 @@ paths:
           $ref: '#/components/responses/OkWithLookup'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ==========================================
   # 9. MÓDULO DE PATRONES PREDICTIVOS
   # ==========================================
   /api/patrones_predictivos:
     post:
+      security:
+        - bearerAuth: []
       tags: [Patrones Predictivos]
       operationId: createPredictivePattern
       summary: Crear un patrón predictivo de consumo (Valida usuario existente)
@@ -499,7 +665,13 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
     get:
+      security:
+        - bearerAuth: []
       tags: [Patrones Predictivos]
       operationId: getPredictivePatterns
       summary: Obtener patrones predictivos (Filtrable por usuario)
@@ -507,14 +679,20 @@ paths:
         - $ref: '#/components/parameters/UsuarioIdQuery'
       responses:
         "200":
-          $ref: '#/components/responses/OkWithLookup'
+          $ref: '#/components/responses/Ok'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   /api/patrones_predictivos/{id}:
     parameters:
       - $ref: '#/components/parameters/PatronIdPath'
     get:
+      security:
+        - bearerAuth: []
       tags: [Patrones Predictivos]
       operationId: getPredictivePatternById
       summary: Consultar patrón predictivo individual por ID
@@ -523,7 +701,11 @@ paths:
           $ref: '#/components/responses/OkWithLookup'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Patrones Predictivos]
       operationId: deletePredictivePattern
       summary: Eliminar patrón predictivo (bloqueado si un plan de comidas lo utiliza)
@@ -534,6 +716,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ==========================================
   # 12. VALIDACIÓN DE IDs EN TIEMPO REAL
@@ -552,6 +736,9 @@ paths:
 
   /api/validaciones/{coleccion}/{id}:
     get:
+      security:
+        - {}
+        - bearerAuth: []
       tags: [Validaciones]
       operationId: validateId
       summary: Verificar si un ID existe en una colección (sin ejecutar la operación)
@@ -591,12 +778,16 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ==========================================
   # 10. MÓDULO DE PLANES DE COMIDA (MEAL PREPS)
   # ==========================================
   /api/meal_preps:
     post:
+      security:
+        - bearerAuth: []
       tags: [Planes de Comida (Meal Preps)]
       operationId: createMealPrep
       summary: Crear plan de comida (Valida patrón predictivo, ingrediente y unicidad del patrón)
@@ -613,7 +804,11 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
     get:
+      security:
+        - bearerAuth: []
       tags: [Planes de Comida (Meal Preps)]
       operationId: listMealPreps
       summary: Listar planes de comida
@@ -622,11 +817,15 @@ paths:
           $ref: '#/components/responses/Ok'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   /api/meal_preps/{id}:
     parameters:
       - $ref: '#/components/parameters/MealPrepIdPath'
     get:
+      security:
+        - bearerAuth: []
       tags: [Planes de Comida (Meal Preps)]
       operationId: getMealPrepById
       summary: Consultar plan de comida individual por ID
@@ -635,7 +834,11 @@ paths:
           $ref: '#/components/responses/OkWithLookup'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Planes de Comida (Meal Preps)]
       operationId: deleteMealPrep
       summary: Eliminar plan de comida por ID
@@ -646,12 +849,16 @@ paths:
           $ref: '#/components/responses/Conflict'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   # ==========================================
   # 11. MÓDULO DE NOTIFICACIONES
   # ==========================================
   /api/notificaciones:
     post:
+      security:
+        - bearerAuth: []
       tags: [Notificaciones]
       operationId: createNotification
       summary: Crear notificación para un usuario existente
@@ -668,7 +875,13 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
     get:
+      security:
+        - bearerAuth: []
       tags: [Notificaciones]
       operationId: listNotifications
       summary: Listar notificaciones (Filtrable por usuario)
@@ -676,14 +889,20 @@ paths:
         - $ref: '#/components/parameters/UsuarioIdQuery'
       responses:
         "200":
-          $ref: '#/components/responses/OkWithLookup'
+          $ref: '#/components/responses/Ok'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   /api/notificaciones/{id}:
     parameters:
       - $ref: '#/components/parameters/NotificacionIdPath'
     get:
+      security:
+        - bearerAuth: []
       tags: [Notificaciones]
       operationId: getNotificationById
       summary: Consultar notificación individual por ID
@@ -692,7 +911,11 @@ paths:
           $ref: '#/components/responses/OkWithLookup'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
     delete:
+      security:
+        - bearerAuth: []
       tags: [Notificaciones]
       operationId: deleteNotification
       summary: Eliminar notificación por ID
@@ -703,12 +926,28 @@ paths:
           $ref: '#/components/responses/Conflict'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
   # ------------------------------------------
   # Parámetros de ID reutilizables
   # ------------------------------------------
   parameters:
+    PaginaQuery:
+      name: pagina
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+      description: Número de página. La paginación se activa al enviar pagina o limite.
+    LimiteQuery:
+      name: limite
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+      description: Número de registros por página.
     UsuarioIdPath:
       name: id
       in: path
@@ -722,7 +961,7 @@ components:
       name: user_nombre
       in: query
       required: false
-      description: ID del usuario para filtrar (colección `usuarios`). Si se envía y no existe devuelve HTTP 200 con `success: false`.
+      description: ID del usuario de la sesión. Si se omite, se usa el usuario autenticado.
       schema:
         type: string
         example: '1001'
@@ -842,8 +1081,20 @@ components:
                   campo: user_nombre
                   valor: '9999'
                   recurso: Usuario
+    Unauthorized:
+      description: Credenciales inválidas o token ausente, vencido o inválido.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+    Forbidden:
+      description: El usuario solicitado no corresponde a la sesión.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
     BadRequest:
-      description: La solicitud contiene JSON inválido o indica una colección no admitida.
+      description: La solicitud contiene JSON inválido o algún parámetro no admitido.
       content:
         application/json:
           schema:
@@ -922,7 +1173,7 @@ components:
 
     UsuarioInput:
       type: object
-      required: [id, nombre, email, password_hash]
+      required: [id, nombre, email, password]
       properties:
         id:
           type: string
@@ -936,8 +1187,9 @@ components:
           type: string
           format: email
           example: usuario@ejemplo.com
-        password_hash:
+        password:
           type: string
+          format: password
           description: Mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos
           example: Segura2026!Abc
 
@@ -951,8 +1203,9 @@ components:
           type: string
           format: email
           example: usuario@ejemplo.com
-        password_hash:
+        password:
           type: string
+          format: password
           description: Mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos
           example: Segura2026!Abc
 
@@ -1012,11 +1265,11 @@ components:
 
     InventarioInput:
       type: object
-      required: [user_nombre, producto_id, unidad_medida_nombre, cantidad]
+      required: [producto_id, unidad_medida_nombre, cantidad]
       properties:
         user_nombre:
           type: string
-          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe devuelve HTTP 200 con `success: false`."
+          description: Si se envía, debe coincidir con el ID del usuario de la sesión.
           example: '1001'
         nevera_id:
           type: string
@@ -1032,6 +1285,7 @@ components:
           example: Litro
         cantidad:
           type: number
+          minimum: 0
           example: 2
         fecha_vencimiento:
           type: string
@@ -1064,6 +1318,7 @@ components:
           example: Litro
         cantidad:
           type: number
+          minimum: 0
           example: 3
         fecha_vencimiento:
           type: string
@@ -1075,14 +1330,14 @@ components:
 
     PatronPredictivoInput:
       type: object
-      required: [_id, user_nombre]
+      required: [_id]
       properties:
         _id:
           type: string
           example: PATRON-001
         user_nombre:
           type: string
-          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe devuelve HTTP 200 con `success: false`."
+          description: Si se envía, debe coincidir con el ID del usuario de la sesión.
           example: '1001'
         frecuencia_compra_dias:
           type: number
@@ -1109,11 +1364,11 @@ components:
 
     NotificacionInput:
       type: object
-      required: [user_nombre, mensaje]
+      required: [mensaje]
       properties:
         user_nombre:
           type: string
-          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe devuelve HTTP 200 con `success: false`."
+          description: Si se envía, debe coincidir con el ID del usuario de la sesión.
           example: '1001'
         mensaje:
           type: string
