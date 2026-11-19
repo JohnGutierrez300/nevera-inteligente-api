@@ -41,9 +41,11 @@ paths:
               properties:
                 id:
                   type: string
+                  example: '1001'
                 password:
                   type: string
                   format: password
+                  example: Ejemplo2026!Jj
       responses:
         "200":
           description: Sesión iniciada
@@ -94,6 +96,7 @@ paths:
           required: false
           schema:
             type: string
+            example: John Javier
           description: Texto para filtrar usuarios por ID, nombre o correo (devuelve aviso si no hay coincidencias)
       responses:
         "200":
@@ -752,12 +755,13 @@ paths:
           schema:
             type: string
             enum: [usuarios, categorias, marcas, unidades_medida, productos, inventario, historial_inventario, patrones_predictivos, ingredientes, meal_preps, notificaciones]
+            example: usuarios
         - name: id
           in: path
           required: true
           schema:
             type: string
-            example: '2'
+            example: '1001'
       responses:
         "200":
           description: Resultado de la validación
@@ -768,7 +772,7 @@ paths:
                   value:
                     success: true
                     message: ID válido - Usuario encontrado
-                    data: { existe: true, coleccion: usuarios, recurso: Usuario, id: '2' }
+                    data: { existe: true, coleccion: usuarios, recurso: Usuario, id: '1001' }
                 noExiste:
                   value:
                     success: false
@@ -1182,32 +1186,32 @@ components:
         nombre:
           type: string
           description: Nombre único
-          example: carlos
+          example: John Javier
         email:
           type: string
           format: email
-          example: usuario@ejemplo.com
+          example: john.javier@example.com
         password:
           type: string
           format: password
           description: Mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos
-          example: Segura2026!Abc
+          example: Ejemplo2026!Jj
 
     UsuarioUpdate:
       type: object
       properties:
         nombre:
           type: string
-          example: carlos
+          example: John Javier
         email:
           type: string
           format: email
-          example: usuario@ejemplo.com
+          example: john.javier@example.com
         password:
           type: string
           format: password
           description: Mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos
-          example: Segura2026!Abc
+          example: Ejemplo2026!Jj
 
     CategoriaInput:
       type: object
