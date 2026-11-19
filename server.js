@@ -154,6 +154,10 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   password_hash: { type: String, required: true, select: false }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
 
+const IdUsuarioRetirado = mongoose.model('IdUsuarioRetirado', new mongoose.Schema({
+  _id: { type: String, required: true }
+}, { collection: 'usuarios_ids_retirados', _id: false, versionKey: false }));
+
 const Sesion = mongoose.model('Sesion', new mongoose.Schema({
   _id: String,
   usuario: { type: String, required: true },
@@ -426,14 +430,25 @@ app.post('/api/usuarios', async (req, res, next) => {
       return res.status(200).json(responseFormat(false, 'La contraseña no cumple con los requisitos de seguridad (mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos).', null));
     }
 
-    const usuarioExistente = await Usuario.findOne({ $or: [{ _id: idAValidar }, { nombre }, { email }] });
-    if (usuarioExistente) {
-      return res.status(200).json(responseFormat(false, 'El ID, nombre de usuario o correo electrónico ya se encuentran registrados.', null));
-    }
+    const idUsuario = String(idAValidar);
+    const passwordProtegida = await protegerClave(clave);
+    const respuesta = await enTransaccion(async () => {
+      const usuarioExistente = await Usuario.exists({ $or: [{ _id: idUsuario }, { nombre }, { email }] });
+      if (usuarioExistente) {
+        return responseFormat(false, 'El ID, nombre de usuario o correo electrónico ya se encuentran registrados.');
+      }
 
-    const nuevoUsuario = new Usuario({ _id: idAValidar, nombre, email, password_hash: await protegerClave(clave) });
-    await nuevoUsuario.save();
-    res.status(200).json(responseFormat(true, 'Usuario creado exitosamente', usuarioPublico(nuevoUsuario)));
+      // Los snapshots también reservan los IDs de cuentas eliminadas antes de este cambio.
+      const idRetirado = await IdUsuarioRetirado.exists({ _id: idUsuario })
+        || await HistorialInventario.exists({ 'snapshot_datos.user_nombre': idUsuario });
+      if (idRetirado) {
+        return responseFormat(false, 'El ID pertenece a una cuenta anterior y no se puede reutilizar.');
+      }
+
+      const nuevoUsuario = await Usuario.create({ _id: idUsuario, nombre, email, password_hash: passwordProtegida });
+      return responseFormat(true, 'Usuario creado exitosamente', usuarioPublico(nuevoUsuario));
+    });
+    res.status(200).json(respuesta);
   } catch (error) {
     next(error);
   }
@@ -515,6 +530,7 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
 mutacion('delete', '/api/usuarios/:id', async req => {
   exigirPropietario(req.usuarioId, req.params.id);
   const usuarioEliminado = await eliminarPorId(Usuario, req.params.id);
+  await IdUsuarioRetirado.updateOne({ _id: usuarioEliminado._id }, { $setOnInsert: { _id: usuarioEliminado._id } }, { upsert: true });
   await Sesion.deleteMany({ usuario: req.usuarioId });
   return responseFormat(true, 'Usuario eliminado exitosamente', usuarioEliminado);
 });

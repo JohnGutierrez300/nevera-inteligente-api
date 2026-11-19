@@ -71,6 +71,7 @@ paths:
       tags: [Usuarios]
       operationId: createUser
       summary: Crear un nuevo usuario (Valida unicidad, ID numérico y contraseña segura)
+      description: Si el ID pertenece a una cuenta eliminada o quedó en su historial, devuelve HTTP 200 con `success: false`.
       requestBody:
         required: true
         content:
@@ -153,6 +154,7 @@ paths:
       tags: [Usuarios]
       operationId: deleteUser
       summary: Eliminar un usuario (Bloqueado si tiene inventario, patrones predictivos o notificaciones)
+      description: Al eliminar la cuenta, su ID queda reservado y el historial de inventario se conserva.
       responses:
         "200":
           $ref: '#/components/responses/OkWithLookup'
