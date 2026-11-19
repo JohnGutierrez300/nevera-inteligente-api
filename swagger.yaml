@@ -1,11 +1,20 @@
 openapi: '3.0.0'
 info:
   title: Nevera Inteligente API
-  description: API RESTful con arquitectura jerárquica, validaciones en tiempo real, restricciones de integridad y respuestas unificadas.
-  version: '1.0.0'
+  description: |
+    API RESTful con arquitectura jerárquica, validaciones en tiempo real, restricciones de integridad y respuestas unificadas.
+
+    **Integridad referencial**
+    - **Validación de IDs (404):** todo ID de otra colección recibido en el body o en la query (`user_nombre`, `producto_id`, `marca_nombre`, etc.) se busca en tiempo real. Si no existe, la API responde `404` con el mensaje *"El recurso con el ID proporcionado no fue encontrado"*.
+    - **Restricción al eliminar (409):** un recurso no puede eliminarse mientras otros registros lo referencien. La API responde `409` con el mensaje *"No se puede eliminar el registro porque está siendo utilizado en otros registros del sistema"* e indica en `data.dependencias` qué colecciones lo usan.
+    - El historial de inventario es una bitácora y no bloquea eliminaciones.
+    - **Validación en vivo:** al pulsar *Try it out*, los campos de ID (ruta, query y campos foráneos del body) se validan mientras se escriben o al salir del campo, sin presionar *Execute* (✅ / ❌ bajo el campo).
+  version: '1.1.0'
 servers:
   - url: https://nevera-inteligente-api.onrender.com
     description: Servidor de producción en Render (Nube)
+  - url: http://localhost:3000
+    description: Servidor local de desarrollo
 
 paths:
   # ==========================================
@@ -13,8 +22,7 @@ paths:
   # ==========================================
   /api/usuarios:
     post:
-      tags:
-        - Usuarios
+      tags: [Usuarios]
       operationId: createUser
       summary: Crear un nuevo usuario (Valida unicidad, ID numérico y contraseña segura)
       requestBody:
@@ -25,14 +33,9 @@ paths:
               $ref: '#/components/schemas/UsuarioInput'
       responses:
         "200":
-          description: Resultado de la validación y registro
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
     get:
-      tags:
-        - Usuarios
+      tags: [Usuarios]
       operationId: listUsers
       summary: Listar o filtrar usuarios por ID, nombre o correo
       parameters:
@@ -44,81 +47,53 @@ paths:
           description: Texto para filtrar usuarios por ID, nombre o correo (devuelve aviso si no hay coincidencias)
       responses:
         "200":
-          description: Lista obtenida o mensaje de sin coincidencias
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
 
   /api/usuarios/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UsuarioIdPath'
     get:
-      tags:
-        - Usuarios
+      tags: [Usuarios]
       operationId: getUserById
       summary: Consultar un usuario individual por su ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Usuario encontrado o mensaje de no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     put:
-      tags:
-        - Usuarios
+      tags: [Usuarios]
       operationId: updateUser
       summary: Actualizar un usuario (Nombre, correo o contraseña con validación de seguridad)
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UsuarioInput'
+              $ref: '#/components/schemas/UsuarioUpdate'
       responses:
         "200":
-          description: Actualizado exitosamente o rechazo por seguridad/duplicidad
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     delete:
-      tags:
-        - Usuarios
+      tags: [Usuarios]
       operationId: deleteUser
-      summary: Eliminar un usuario y sus datos conectados en cascada (conservando historial)
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      summary: Eliminar un usuario (Bloqueado si tiene inventario, patrones predictivos o notificaciones)
       responses:
         "200":
-          description: Eliminado exitosamente o usuario no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
 
   # ==========================================
   # 2. MÓDULO DE CATEGORÍAS
   # ==========================================
   /api/categorias:
     post:
-      tags:
-        - Categorías
+      tags: [Categorías]
       operationId: createCategory
       summary: Crear una nueva categoría de alimentos
       requestBody:
@@ -129,69 +104,45 @@ paths:
               $ref: '#/components/schemas/CategoriaInput'
       responses:
         "200":
-          description: Creada exitosamente o error de validación
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
     get:
-      tags:
-        - Categorías
+      tags: [Categorías]
       operationId: listCategories
       summary: Listar categorías
       responses:
         "200":
-          description: Lista obtenida exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
 
   /api/categorias/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CategoriaIdPath'
     get:
-      tags:
-        - Categorías
+      tags: [Categorías]
       operationId: getCategoryById
       summary: Consultar categoría individual por ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Obtenida exitosamente o no encontrada
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     delete:
-      tags:
-        - Categorías
+      tags: [Categorías]
       operationId: deleteCategory
       summary: Eliminar categoría (Bloqueada si tiene productos asociados)
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Eliminada exitosamente o restricción de integridad aplicada
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
 
   # ==========================================
   # 3. MÓDULO DE MARCAS
   # ==========================================
   /api/marcas:
     post:
-      tags:
-        - Marcas
+      tags: [Marcas]
       operationId: createBrand
       summary: Crear una nueva marca
       requestBody:
@@ -202,69 +153,45 @@ paths:
               $ref: '#/components/schemas/MarcaInput'
       responses:
         "200":
-          description: Creada exitosamente o error de validación
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
     get:
-      tags:
-        - Marcas
+      tags: [Marcas]
       operationId: listBrands
       summary: Listar marcas
       responses:
         "200":
-          description: Lista obtenida exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
 
   /api/marcas/{id}:
+    parameters:
+      - $ref: '#/components/parameters/MarcaIdPath'
     get:
-      tags:
-        - Marcas
+      tags: [Marcas]
       operationId: getBrandById
       summary: Consultar marca individual por ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Obtenida exitosamente o no encontrada
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     delete:
-      tags:
-        - Marcas
+      tags: [Marcas]
       operationId: deleteBrand
       summary: Eliminar marca (Bloqueada si tiene productos asociados)
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Eliminada exitosamente o restricción de integridad aplicada
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
 
   # ==========================================
   # 4. MÓDULO DE UNIDADES DE MEDIDA
   # ==========================================
   /api/unidades_medida:
     post:
-      tags:
-        - Unidades de Medida
+      tags: [Unidades de Medida]
       operationId: createUnit
       summary: Crear una nueva unidad de medida
       requestBody:
@@ -275,69 +202,45 @@ paths:
               $ref: '#/components/schemas/UnidadMedidaInput'
       responses:
         "200":
-          description: Creada exitosamente o error de validación
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
     get:
-      tags:
-        - Unidades de Medida
+      tags: [Unidades de Medida]
       operationId: listUnits
       summary: Listar unidades de medida
       responses:
         "200":
-          description: Lista obtenida exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
 
   /api/unidades_medida/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UnidadMedidaIdPath'
     get:
-      tags:
-        - Unidades de Medida
+      tags: [Unidades de Medida]
       operationId: getUnitById
       summary: Consultar unidad de medida individual por ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Obtenida exitosamente o no encontrada
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     delete:
-      tags:
-        - Unidades de Medida
+      tags: [Unidades de Medida]
       operationId: deleteUnit
       summary: Eliminar unidad (Bloqueada si está en uso en el inventario)
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Eliminada exitosamente o restricción de integridad aplicada
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
 
   # ==========================================
   # 5. MÓDULO DE INGREDIENTES
   # ==========================================
   /api/ingredientes:
     post:
-      tags:
-        - Ingredientes
+      tags: [Ingredientes]
       operationId: createIngredient
       summary: Crear un nuevo ingrediente base
       requestBody:
@@ -348,71 +251,47 @@ paths:
               $ref: '#/components/schemas/IngredienteInput'
       responses:
         "200":
-          description: Creado exitosamente o error de validación
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
     get:
-      tags:
-        - Ingredientes
+      tags: [Ingredientes]
       operationId: listIngredients
       summary: Listar ingredientes
       responses:
         "200":
-          description: Lista obtenida exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
 
   /api/ingredientes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IngredienteIdPath'
     get:
-      tags:
-        - Ingredientes
+      tags: [Ingredientes]
       operationId: getIngredientById
       summary: Consultar ingrediente individual por ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Obtenido exitosamente o no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     delete:
-      tags:
-        - Ingredientes
+      tags: [Ingredientes]
       operationId: deleteIngredient
       summary: Eliminar ingrediente (Bloqueado si está en un Meal Prep)
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Eliminado exitosamente o restricción de integridad aplicada
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
 
   # ==========================================
   # 6. MÓDULO DE PRODUCTOS
   # ==========================================
   /api/productos:
     post:
-      tags:
-        - Productos
+      tags: [Productos]
       operationId: createProduct
-      summary: Crear un nuevo producto comercial (Valida marca y categoría existentes)
+      summary: Crear un nuevo producto comercial (Valida en tiempo real marca y categoría)
       requestBody:
         required: true
         content:
@@ -421,71 +300,49 @@ paths:
               $ref: '#/components/schemas/ProductoInput'
       responses:
         "200":
-          description: Creado exitosamente o error de referencia
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     get:
-      tags:
-        - Productos
+      tags: [Productos]
       operationId: listProducts
       summary: Listar productos con detalle de marca y categoría
       responses:
         "200":
-          description: Lista obtenida exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
 
   /api/productos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ProductoIdPath'
     get:
-      tags:
-        - Productos
+      tags: [Productos]
       operationId: getProductById
       summary: Consultar producto individual por ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Obtenido exitosamente o no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     delete:
-      tags:
-        - Productos
+      tags: [Productos]
       operationId: deleteProduct
       summary: Eliminar producto (Bloqueado si está en el inventario)
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Eliminado exitosamente o restricción de integridad aplicada
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
 
   # ==========================================
   # 7. MÓDULO DE INVENTARIO
   # ==========================================
   /api/inventario:
     post:
-      tags:
-        - Inventario
+      tags: [Inventario]
       operationId: addInventoryItem
-      summary: Agregar alimento a la nevera o acumular cantidad si ya existe activo
+      summary: Agregar alimento a la nevera o acumular cantidad (Valida usuario, producto y unidad)
       requestBody:
         required: true
         content:
@@ -494,141 +351,97 @@ paths:
               $ref: '#/components/schemas/InventarioInput'
       responses:
         "200":
-          description: Agregado o acumulado exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     get:
-      tags:
-        - Inventario
+      tags: [Inventario]
       operationId: listInventoryItems
       summary: Listar inventario (Filtrable por usuario y nevera)
       parameters:
-        - name: user_nombre
-          in: query
-          required: false
-          schema:
-            type: string
+        - $ref: '#/components/parameters/UsuarioIdQuery'
         - name: nevera_id
           in: query
           required: false
           schema:
             type: string
+            example: NEVERA-01
       responses:
         "200":
-          description: Lista obtenida exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
 
   /api/inventario/{itemId}:
+    parameters:
+      - $ref: '#/components/parameters/InventarioIdPath'
     get:
-      tags:
-        - Inventario
+      tags: [Inventario]
       operationId: getInventoryItem
       summary: Consultar detalle de un alimento por ID
-      parameters:
-        - name: itemId
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Obtenido exitosamente o no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     put:
-      tags:
-        - Inventario
+      tags: [Inventario]
       operationId: updateInventoryItem
-      summary: Actualizar alimento del inventario y registrar en historial
-      parameters:
-        - name: itemId
-          in: path
-          required: true
-          schema:
-            type: string
+      summary: Actualizar alimento del inventario (Valida los IDs enviados) y registrar en historial
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/InventarioInput'
+              $ref: '#/components/schemas/InventarioUpdate'
       responses:
         "200":
-          description: Actualizado exitosamente o no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     delete:
-      tags:
-        - Inventario
+      tags: [Inventario]
       operationId: deleteInventoryItem
       summary: Eliminar alimento del inventario y guardar snapshot en historial
-      parameters:
-        - name: itemId
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Eliminado exitosamente o no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
 
   # ==========================================
   # 8. MÓDULO DE HISTORIAL DE INVENTARIO
   # ==========================================
   /api/historial_inventario:
     get:
-      tags:
-        - Historial de Inventario
+      tags: [Historial de Inventario]
       operationId: listInventoryHistory
       summary: Listar bitácora de cambios con respaldo (snapshot)
       responses:
         "200":
-          description: Historial obtenido exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
 
   /api/historial_inventario/{id}:
+    parameters:
+      - $ref: '#/components/parameters/HistorialIdPath'
     get:
-      tags:
-        - Historial de Inventario
+      tags: [Historial de Inventario]
       operationId: getHistoryById
       summary: Consultar registro individual del historial por ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Obtenido exitosamente o no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
 
   # ==========================================
   # 9. MÓDULO DE PATRONES PREDICTIVOS
   # ==========================================
   /api/patrones_predictivos:
     post:
-      tags:
-        - Patrones Predictivos
+      tags: [Patrones Predictivos]
       operationId: createPredictivePattern
       summary: Crear un patrón predictivo de consumo (Valida usuario existente)
       requestBody:
@@ -639,57 +452,102 @@ paths:
               $ref: '#/components/schemas/PatronPredictivoInput'
       responses:
         "200":
-          description: Creado exitosamente o error de validación
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     get:
-      tags:
-        - Patrones Predictivos
+      tags: [Patrones Predictivos]
       operationId: getPredictivePatterns
       summary: Obtener patrones predictivos (Filtrable por usuario)
       parameters:
-        - name: user_nombre
-          in: query
-          required: false
-          schema:
-            type: string
+        - $ref: '#/components/parameters/UsuarioIdQuery'
       responses:
         "200":
-          description: Obtenidos exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
 
   /api/patrones_predictivos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PatronIdPath'
     get:
-      tags:
-        - Patrones Predictivos
+      tags: [Patrones Predictivos]
       operationId: getPredictivePatternById
       summary: Consultar patrón predictivo individual por ID
+      responses:
+        "200":
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Patrones Predictivos]
+      operationId: deletePredictivePattern
+      summary: Eliminar patrón predictivo (bloqueado si un plan de comidas lo utiliza)
+      responses:
+        "200":
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+
+  # ==========================================
+  # 12. VALIDACIÓN DE IDs EN TIEMPO REAL
+  # ==========================================
+  /api/validaciones/mapa:
+    get:
+      tags: [Validaciones]
+      operationId: getValidationMap
+      summary: Mapa de colecciones y campos foráneos validables
+      description: Lo usa Swagger UI para saber qué campos validar mientras se escribe.
+      responses:
+        "200":
+          $ref: '#/components/responses/Ok'
+
+  /api/validaciones/{coleccion}/{id}:
+    get:
+      tags: [Validaciones]
+      operationId: validateId
+      summary: Verificar si un ID existe en una colección (sin ejecutar la operación)
+      description: |
+        Swagger UI llama a este endpoint automáticamente al escribir o salir de un campo de ID
+        (parámetros de ruta, de query y campos foráneos del body). Responde `success:true` si el ID existe.
       parameters:
+        - name: coleccion
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [usuarios, categorias, marcas, unidades_medida, productos, inventario, historial_inventario, patrones_predictivos, ingredientes, meal_preps, notificaciones]
         - name: id
           in: path
           required: true
           schema:
             type: string
+            example: '2'
       responses:
         "200":
-          description: Obtenido exitosamente o no encontrado
+          description: Resultado de la validación
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+              examples:
+                existe:
+                  value:
+                    success: true
+                    message: ID válido - Usuario encontrado
+                    data: { existe: true, coleccion: usuarios, recurso: Usuario, id: '2' }
+                noExiste:
+                  value:
+                    success: false
+                    message: 'Error: El ID no existe en la base de datos'
+                    data: { existe: false, coleccion: usuarios, recurso: Usuario, id: '9999' }
 
   # ==========================================
   # 10. MÓDULO DE PLANES DE COMIDA (MEAL PREPS)
   # ==========================================
   /api/meal_preps:
     post:
-      tags:
-        - Planes de Comida (Meal Preps)
+      tags: [Planes de Comida (Meal Preps)]
       operationId: createMealPrep
       summary: Crear plan de comida (Valida patrón predictivo, ingrediente y unicidad del patrón)
       requestBody:
@@ -700,69 +558,47 @@ paths:
               $ref: '#/components/schemas/MealPrepInput'
       responses:
         "200":
-          description: Creado exitosamente o error de validación/duplicidad
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     get:
-      tags:
-        - Planes de Comida (Meal Preps)
+      tags: [Planes de Comida (Meal Preps)]
       operationId: listMealPreps
       summary: Listar planes de comida
       responses:
         "200":
-          description: Listado obtenido exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
 
   /api/meal_preps/{id}:
+    parameters:
+      - $ref: '#/components/parameters/MealPrepIdPath'
     get:
-      tags:
-        - Planes de Comida (Meal Preps)
+      tags: [Planes de Comida (Meal Preps)]
       operationId: getMealPrepById
       summary: Consultar plan de comida individual por ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Obtenido exitosamente o no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     delete:
-      tags:
-        - Planes de Comida (Meal Preps)
+      tags: [Planes de Comida (Meal Preps)]
       operationId: deleteMealPrep
       summary: Eliminar plan de comida por ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Eliminado exitosamente o no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
 
   # ==========================================
   # 11. MÓDULO DE NOTIFICACIONES
   # ==========================================
   /api/notificaciones:
     post:
-      tags:
-        - Notificaciones
+      tags: [Notificaciones]
       operationId: createNotification
       summary: Crear notificación para un usuario existente
       requestBody:
@@ -773,70 +609,201 @@ paths:
               $ref: '#/components/schemas/NotificacionInput'
       responses:
         "200":
-          description: Creada exitosamente o error de validación
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     get:
-      tags:
-        - Notificaciones
+      tags: [Notificaciones]
       operationId: listNotifications
       summary: Listar notificaciones (Filtrable por usuario)
       parameters:
-        - name: user_nombre
-          in: query
-          required: false
-          schema:
-            type: string
+        - $ref: '#/components/parameters/UsuarioIdQuery'
       responses:
         "200":
-          description: Obtenidas exitosamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
 
   /api/notificaciones/{id}:
+    parameters:
+      - $ref: '#/components/parameters/NotificacionIdPath'
     get:
-      tags:
-        - Notificaciones
+      tags: [Notificaciones]
       operationId: getNotificationById
       summary: Consultar notificación individual por ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Obtenida exitosamente o no encontrada
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
     delete:
-      tags:
-        - Notificaciones
+      tags: [Notificaciones]
       operationId: deleteNotification
       summary: Eliminar notificación por ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
       responses:
         "200":
-          description: Eliminada exitosamente o no encontrada
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiResponse'
+          $ref: '#/components/responses/Ok'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
 
 components:
+  # ------------------------------------------
+  # Parámetros de ID reutilizables
+  # ------------------------------------------
+  parameters:
+    UsuarioIdPath:
+      name: id
+      in: path
+      required: true
+      description: ID numérico del usuario (colección `usuarios`). Se busca en tiempo real; si no existe responde 404.
+      schema:
+        type: string
+        pattern: '^\d+$'
+        example: '1001'
+    UsuarioIdQuery:
+      name: user_nombre
+      in: query
+      required: false
+      description: ID del usuario para filtrar (colección `usuarios`). Si se envía y no existe responde 404.
+      schema:
+        type: string
+        example: '1001'
+    CategoriaIdPath:
+      name: id
+      in: path
+      required: true
+      description: ID (nombre) de la categoría (colección `categorias`).
+      schema:
+        type: string
+        example: Lacteos
+    MarcaIdPath:
+      name: id
+      in: path
+      required: true
+      description: ID (nombre) de la marca (colección `marcas`).
+      schema:
+        type: string
+        example: Alpina
+    UnidadMedidaIdPath:
+      name: id
+      in: path
+      required: true
+      description: ID (nombre) de la unidad de medida (colección `unidades_medida`).
+      schema:
+        type: string
+        example: Litro
+    IngredienteIdPath:
+      name: id
+      in: path
+      required: true
+      description: ID (nombre) del ingrediente (colección `ingredientes`).
+      schema:
+        type: string
+        example: Leche
+    ProductoIdPath:
+      name: id
+      in: path
+      required: true
+      description: ID del producto (colección `productos`).
+      schema:
+        type: string
+        example: PROD-001
+    PatronIdPath:
+      name: id
+      in: path
+      required: true
+      description: ID del patrón predictivo (colección `patrones_predictivos`).
+      schema:
+        type: string
+        example: PATRON-001
+    InventarioIdPath:
+      name: itemId
+      in: path
+      required: true
+      description: ObjectId de MongoDB del alimento (24 caracteres hexadecimales, colección `inventario`). Un formato inválido también responde 404.
+      schema:
+        $ref: '#/components/schemas/ObjectId'
+    HistorialIdPath:
+      name: id
+      in: path
+      required: true
+      description: ObjectId del registro de historial (colección `historial_inventario`).
+      schema:
+        $ref: '#/components/schemas/ObjectId'
+    MealPrepIdPath:
+      name: id
+      in: path
+      required: true
+      description: ObjectId del plan de comida (colección `meal_preps`).
+      schema:
+        $ref: '#/components/schemas/ObjectId'
+    NotificacionIdPath:
+      name: id
+      in: path
+      required: true
+      description: ObjectId de la notificación (colección `notificaciones`).
+      schema:
+        $ref: '#/components/schemas/ObjectId'
+
+  # ------------------------------------------
+  # Respuestas reutilizables
+  # ------------------------------------------
+  responses:
+    Ok:
+      description: Operación procesada. Revise `success` y `message` para el resultado (las validaciones de negocio responden con `success:false`).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
+    NotFound:
+      description: El ID de la ruta, o un ID de otra colección enviado en el body/query, no existe.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorNotFound'
+          examples:
+            idDeRuta:
+              summary: El recurso solicitado no existe
+              value:
+                success: false
+                message: El recurso con el ID proporcionado no fue encontrado
+                data:
+                  recurso: Marca
+                  id: NoExiste
+            idForaneo:
+              summary: Un ID de otra colección enviado no existe
+              value:
+                success: false
+                message: El recurso con el ID proporcionado no fue encontrado
+                data:
+                  campo: user_nombre
+                  valor: '9999'
+                  recurso: Usuario
+    Conflict:
+      description: El recurso está referenciado por otros registros y no puede eliminarse.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorConflict'
+          example:
+            success: false
+            message: No se puede eliminar el registro porque está siendo utilizado en otros registros del sistema
+            data:
+              recurso: Marca
+              id: Alpina
+              dependencias:
+                - coleccion: productos
+                  campo: marca_nombre
+                  registros: 3
+
   schemas:
+    ObjectId:
+      type: string
+      pattern: '^[a-fA-F0-9]{24}$'
+      example: 6650a1b2c3d4e5f6a7b8c9d0
+
     ApiResponse:
       type: object
       properties:
@@ -848,122 +815,269 @@ components:
           type: object
           nullable: true
 
+    ErrorNotFound:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: El recurso con el ID proporcionado no fue encontrado
+        data:
+          type: object
+          description: Detalle del ID que no se encontró
+          properties:
+            recurso:
+              type: string
+              description: Modelo donde se buscó el ID
+              example: Usuario
+            id:
+              type: string
+              description: ID de la ruta que no existe
+            campo:
+              type: string
+              description: Campo del body/query con el ID foráneo inexistente
+              example: user_nombre
+            valor:
+              type: string
+              description: Valor enviado en ese campo
+              example: '9999'
+
+    ErrorConflict:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: No se puede eliminar el registro porque está siendo utilizado en otros registros del sistema
+        data:
+          type: object
+          properties:
+            recurso:
+              type: string
+              example: Marca
+            id:
+              type: string
+              example: Alpina
+            dependencias:
+              type: array
+              items:
+                type: object
+                properties:
+                  coleccion:
+                    type: string
+                    example: productos
+                  campo:
+                    type: string
+                    example: marca_nombre
+                  registros:
+                    type: integer
+                    example: 3
+
     UsuarioInput:
       type: object
+      required: [id, nombre, email, password_hash]
       properties:
         id:
           type: string
           description: ID numérico del usuario
+          example: '1001'
         nombre:
           type: string
           description: Nombre único
+          example: carlos
         email:
           type: string
           format: email
+          example: usuario@ejemplo.com
         password_hash:
           type: string
           description: Mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos
+          example: Segura2026!Abc
+
+    UsuarioUpdate:
+      type: object
+      properties:
+        nombre:
+          type: string
+          example: carlos
+        email:
+          type: string
+          format: email
+          example: usuario@ejemplo.com
+        password_hash:
+          type: string
+          description: Mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos
+          example: Segura2026!Abc
 
     CategoriaInput:
       type: object
+      required: [_id]
       properties:
         _id:
           type: string
+          example: Lacteos
 
     MarcaInput:
       type: object
+      required: [_id]
       properties:
         _id:
           type: string
+          example: Alpina
 
     UnidadMedidaInput:
       type: object
+      required: [_id, abreviatura]
       properties:
         _id:
           type: string
+          example: Litro
         abreviatura:
           type: string
+          example: L
 
     IngredienteInput:
       type: object
+      required: [_id]
       properties:
         _id:
           type: string
+          example: Leche
 
     ProductoInput:
       type: object
+      required: [_id, marca_nombre, categoria_nombre, nombre]
       properties:
         _id:
           type: string
+          example: PROD-001
         marca_nombre:
           type: string
+          description: "**FK → marcas._id.** Se valida en tiempo real; si la marca no existe responde 404."
+          example: Alpina
         categoria_nombre:
           type: string
+          description: "**FK → categorias._id.** Se valida en tiempo real; si la categoría no existe responde 404."
+          example: Lacteos
         nombre:
           type: string
+          example: Leche entera 1L
 
     InventarioInput:
       type: object
+      required: [user_nombre, producto_id, unidad_medida_nombre, cantidad]
       properties:
         user_nombre:
           type: string
+          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe responde 404."
+          example: '1001'
         nevera_id:
           type: string
+          default: NEVERA-01
+          example: NEVERA-01
         producto_id:
           type: string
+          description: "**FK → productos._id.** Se valida en tiempo real; si el producto no existe responde 404."
+          example: PROD-001
         unidad_medida_nombre:
           type: string
+          description: "**FK → unidades_medida._id.** Se valida en tiempo real; si la unidad no existe responde 404."
+          example: Litro
         cantidad:
           type: number
+          example: 2
+        fecha_vencimiento:
+          type: string
+          format: date-time
+          nullable: true
+          example: '2026-12-31T00:00:00.000Z'
+        estado:
+          type: string
+          enum: [EN_NEVERA, CONSUMIDO, DESPERDICIADO]
+          default: EN_NEVERA
+
+    InventarioUpdate:
+      type: object
+      description: Todos los campos son opcionales; los IDs foráneos enviados se validan en tiempo real (404 si no existen).
+      properties:
+        user_nombre:
+          type: string
+          description: "**FK → usuarios._id.** 404 si no existe."
+          example: '1001'
+        nevera_id:
+          type: string
+          example: NEVERA-01
+        producto_id:
+          type: string
+          description: "**FK → productos._id.** 404 si no existe."
+          example: PROD-001
+        unidad_medida_nombre:
+          type: string
+          description: "**FK → unidades_medida._id.** 404 si no existe."
+          example: Litro
+        cantidad:
+          type: number
+          example: 3
         fecha_vencimiento:
           type: string
           format: date-time
           nullable: true
         estado:
           type: string
-          enum:
-            - EN_NEVERA
-            - CONSUMIDO
-            - DESPERDICIADO
-          default: EN_NEVERA
+          enum: [EN_NEVERA, CONSUMIDO, DESPERDICIADO]
 
     PatronPredictivoInput:
       type: object
+      required: [_id, user_nombre]
       properties:
         _id:
           type: string
+          example: PATRON-001
         user_nombre:
           type: string
+          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe responde 404."
+          example: '1001'
         frecuencia_compra_dias:
           type: number
+          example: 7
         probabilidad_desperdicio:
           type: number
+          example: 0.25
 
     MealPrepInput:
       type: object
+      required: [patron_predictivo_id, ingrediente_nombre, nombre_receta]
       properties:
         patron_predictivo_id:
           type: string
-          description: ID del patrón predictivo (FK, único por plan)
+          description: "**FK → patrones_predictivos._id** (único por plan). Se valida en tiempo real; si no existe responde 404."
+          example: PATRON-001
         ingrediente_nombre:
           type: string
-          description: Nombre del ingrediente base (FK)
+          description: "**FK → ingredientes._id.** Se valida en tiempo real; si no existe responde 404."
+          example: Leche
         nombre_receta:
           type: string
+          example: Avena con leche
 
     NotificacionInput:
       type: object
+      required: [user_nombre, mensaje]
       properties:
         user_nombre:
           type: string
+          description: "**FK → usuarios._id.** Se valida en tiempo real; si el usuario no existe responde 404."
+          example: '1001'
         mensaje:
           type: string
+          example: Tu leche vence mañana
         tipo:
           type: string
-          enum:
-            - VENCIMIENTO
-            - STOCK_BAJO
-            - SUGERENCIA
+          enum: [VENCIMIENTO, STOCK_BAJO, SUGERENCIA]
           default: SUGERENCIA
         leida:
           type: boolean

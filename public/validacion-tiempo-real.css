@@ -1,0 +1,8 @@
+/* Retroalimentación de la validación de IDs en tiempo real (Swagger UI) */
+.swagger-ui .val-id { margin: 4px 0 8px; font-size: 13px; font-family: sans-serif; }
+.swagger-ui .val-id__linea { padding: 3px 8px; border-radius: 4px; margin-top: 2px; }
+.swagger-ui .val-id__linea--ok { color: #1b5e20; background: #e8f5e9; }
+.swagger-ui .val-id__linea--error { color: #b71c1c; background: #ffebee; }
+.swagger-ui .val-id__linea--pendiente { color: #555; background: #f2f2f2; }
+.swagger-ui input.val-id-ok, .swagger-ui textarea.val-id-ok { border: 2px solid #43a047 !important; }
+.swagger-ui input.val-id-error, .swagger-ui textarea.val-id-error { border: 2px solid #e53935 !important; }
