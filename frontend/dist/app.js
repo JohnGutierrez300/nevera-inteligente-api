@@ -12,6 +12,12 @@ const updateDialog = byId('update-dialog');
 const detailDialog = byId('detail-dialog');
 const editorDialog = byId('editor-dialog');
 const lotForm = byId('lot-form');
+const navigation = byId('navigation');
+const logoutButton = byId('logout');
+const mobileMenu = byId('mobile-menu');
+const mobileMenuToggle = byId('mobile-menu-toggle');
+const mobileMenuContent = byId('mobile-menu-content');
+const mobileViewport = matchMedia('(max-width: 44rem)');
 const navButtons = [...document.querySelectorAll('[data-view]')];
 const views = {
   home: 'Inicio',
@@ -99,7 +105,7 @@ function toggleRegistration() {
 function showSession(active) {
   byId('session-check').hidden = true;
   byId('login').hidden = active;
-  for (const id of ['dashboard', 'navigation', 'logout']) byId(id).hidden = !active;
+  for (const control of [byId('dashboard'), navigation, logoutButton, mobileMenuToggle]) control.hidden = !active;
 }
 
 function endSession(message = '') {
@@ -111,6 +117,7 @@ function endSession(message = '') {
   if (deleteDialog.open) deleteDialog.close();
   if (detailDialog.open) detailDialog.close();
   if (editorDialog.open) editorDialog.close();
+  closeMobileMenu();
   pendingConfirmation = null;
   closeUpdateFeedback();
   unreadCount([]);
@@ -120,15 +127,14 @@ function endSession(message = '') {
 }
 
 async function signOut() {
-  const logout = byId('logout');
-  logout.disabled = true;
+  logoutButton.disabled = true;
   try {
     await request('/usuarios/logout', 'POST');
     endSession('Sesión cerrada.');
   } catch (error) {
     if (user) notice(error.message, true);
   } finally {
-    logout.disabled = false;
+    logoutButton.disabled = false;
   }
 }
 
@@ -165,7 +171,7 @@ auth.addEventListener('submit', async event => {
 });
 
 byId('register-toggle').addEventListener('click', toggleRegistration);
-byId('logout').addEventListener('click', signOut);
+logoutButton.addEventListener('click', signOut);
 
 function showAuthForm(form, focus = true) {
   for (const candidate of [auth, forgotForm, resetForm]) {
@@ -380,7 +386,37 @@ function selectView(view) {
   return loadView();
 }
 
-for (const button of navButtons) button.addEventListener('click', () => selectView(button.dataset.view));
+function restoreSidebarMenu() {
+  if (mobileMenu.open || navigation.parentElement !== mobileMenuContent) return;
+  mobileMenu.before(navigation, logoutButton);
+  mobileMenuToggle.setAttribute('aria-expanded', 'false');
+}
+
+function closeMobileMenu() {
+  if (mobileMenu.open) mobileMenu.close();
+  restoreSidebarMenu();
+}
+
+mobileMenuToggle.addEventListener('click', () => {
+  if (!user || !mobileViewport.matches || mobileMenu.open) return;
+  mobileMenuContent.append(navigation, logoutButton);
+  mobileMenu.showModal();
+  mobileMenuToggle.setAttribute('aria-expanded', 'true');
+});
+byId('mobile-menu-close').addEventListener('click', closeMobileMenu);
+mobileMenu.addEventListener('close', restoreSidebarMenu);
+mobileMenu.addEventListener('click', event => {
+  if (event.target !== mobileMenu) return;
+  const bounds = mobileMenu.getBoundingClientRect();
+  if (event.clientX < bounds.left || event.clientX > bounds.right ||
+      event.clientY < bounds.top || event.clientY > bounds.bottom) closeMobileMenu();
+});
+mobileViewport.addEventListener('change', event => { if (!event.matches) closeMobileMenu(); });
+
+for (const button of navButtons) button.addEventListener('click', () => {
+  closeMobileMenu();
+  void selectView(button.dataset.view);
+});
 filters.addEventListener('submit', event => {
   event.preventDefault();
   void loadView();

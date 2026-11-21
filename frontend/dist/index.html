@@ -11,6 +11,9 @@
 </head>
 <body>
   <aside class="sidebar">
+    <button id="mobile-menu-toggle" class="mobile-menu-toggle" type="button" aria-label="Abrir menú" aria-haspopup="dialog" aria-controls="mobile-menu" aria-expanded="false" hidden>
+      <span class="menu-lines" aria-hidden="true"></span>
+    </button>
     <div class="brand"><span class="fridge" aria-hidden="true"></span><strong>Nevera<br>Inteligente</strong></div>
     <nav id="navigation" aria-label="Menú principal" hidden>
       <button data-view="home" aria-current="page">Inicio</button>
@@ -22,6 +25,13 @@
       <button data-view="profile">Mi cuenta</button>
     </nav>
     <button id="logout" class="logout" hidden>Cerrar sesión</button>
+    <dialog id="mobile-menu" aria-labelledby="mobile-menu-title">
+      <div class="mobile-menu-heading">
+        <h2 id="mobile-menu-title">Menú</h2>
+        <button id="mobile-menu-close" type="button" aria-label="Cerrar menú" autofocus><span aria-hidden="true">×</span></button>
+      </div>
+      <div id="mobile-menu-content"></div>
+    </dialog>
   </aside>
   <main>
     <p id="notice" role="status" aria-live="polite" hidden></p>

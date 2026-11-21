@@ -48,6 +48,8 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   background: linear-gradient(158deg, #174735, #0b2a21 72%);
 }
 
+.mobile-menu-toggle { display: none; }
+
 .brand {
   display: flex;
   align-items: center;
@@ -694,6 +696,65 @@ dialog::backdrop { background: #0d271f9e; backdrop-filter: blur(5px); }
 }
 
 @media (max-width: 44rem) {
+  .sidebar { flex-direction: row; align-items: center; }
+  .sidebar > nav, .sidebar > .logout { display: none; }
+
+  .mobile-menu-toggle, #mobile-menu-close {
+    display: grid;
+    place-items: center;
+    flex: 0 0 2.75rem;
+    width: 2.75rem;
+    height: 2.75rem;
+    padding: 0;
+    border: 1px solid #c0e4ca60;
+    border-radius: .65rem;
+    color: #fff;
+    background: #ffffff12;
+  }
+
+  .mobile-menu-toggle:focus-visible, #mobile-menu-close:focus-visible { outline-color: var(--mint); }
+  #mobile-menu-close { font-size: 1.65rem; line-height: 1; }
+
+  .menu-lines {
+    width: 1.15rem;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+    box-shadow: 0 -.34rem currentColor, 0 .34rem currentColor;
+  }
+
+  #mobile-menu[open] {
+    position: fixed;
+    inset: 0 auto 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+    width: min(19rem, calc(100% - 3rem));
+    height: 100%;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    padding: 1rem;
+    border: 0;
+    border-radius: 0 1rem 1rem 0;
+    background: linear-gradient(158deg, #174735, #0b2a21 72%);
+    color: #fff;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    animation: slide-menu-in 230ms ease-out both;
+  }
+
+  .mobile-menu-heading { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+  .mobile-menu-heading h2 { margin: 0; }
+  #mobile-menu-content { display: flex; flex: 1; flex-direction: column; gap: 1rem; }
+  #mobile-menu nav { display: grid; }
+  #mobile-menu nav button, #mobile-menu .logout { width: 100%; }
+
+  @keyframes slide-menu-in {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(0); }
+  }
+
   .welcome { grid-template-columns: 1fr; min-height: 0; gap: 1.5rem; }
   .welcome > div { padding-block: .5rem; }
   .welcome h1 { font-size: clamp(3.1rem, 12vw, 4.8rem); }
