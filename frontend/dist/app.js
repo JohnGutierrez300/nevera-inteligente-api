@@ -1,10 +1,5 @@
-'use strict';
+import { createDashboard } from './dashboard.js';
 
-const apiOrigin = location.pathname.startsWith('/app/')
-  ? location.origin
-  : ['localhost', '127.0.0.1'].includes(location.hostname)
-    ? 'http://127.0.0.1:3000'
-    : 'https://nevera-inteligente-api.onrender.com';
 const byId = id => document.getElementById(id);
 const auth = byId('auth');
 const forgotForm = byId('forgot-form');
@@ -14,12 +9,18 @@ const results = byId('results');
 const dialog = byId('lot-dialog');
 const deleteDialog = byId('delete-dialog');
 const updateDialog = byId('update-dialog');
+const detailDialog = byId('detail-dialog');
+const editorDialog = byId('editor-dialog');
 const lotForm = byId('lot-form');
 const navButtons = [...document.querySelectorAll('[data-view]')];
 const views = {
-  inventory: { title: 'Inventario', endpoint: '/inventario', empty: 'No hay lotes para mostrar.' },
-  plans: { title: 'Planes de comida', endpoint: '/meal_preps', empty: 'Aún no tienes planes de comida.' },
-  alerts: { title: 'Notificaciones', endpoint: '/notificaciones', empty: 'Aún no tienes notificaciones.' }
+  home: 'Inicio',
+  inventory: 'Inventario',
+  plans: 'Planes de comida',
+  alerts: 'Notificaciones',
+  history: 'Historial',
+  catalog: 'Catálogo',
+  profile: 'Mi cuenta'
 };
 const states = { EN_NEVERA: 'En nevera', CONSUMIDO: 'Consumido', DESPERDICIADO: 'Desperdiciado' };
 const dateFormat = new Intl.DateTimeFormat('es-CO', {
@@ -27,32 +28,37 @@ const dateFormat = new Intl.DateTimeFormat('es-CO', {
 });
 const numberFormat = new Intl.NumberFormat('es-CO', { maximumSignificantDigits: 15 });
 const field = (form, name) => form.elements.namedItem(name);
-let token = '';
+let user = null;
 let registering = false;
 let recoveryToken = '';
-let currentView = 'inventory';
+let currentView = 'home';
 let viewRequest = 0;
 let editingId = '';
-let pendingDeletion = null;
+let pendingConfirmation = null;
 let updateFeedbackTimer;
 
 async function request(path, method = 'GET', body) {
-  const requestToken = token;
-  const headers = {};
-  if (requestToken) headers.Authorization = 'Bearer ' + requestToken;
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const requestUser = user;
   let response;
   try {
-    response = await fetch(apiOrigin + '/api' + path, {
-      method, headers, body: body === undefined ? undefined : JSON.stringify(body)
+    response = await fetch('/api' + path, {
+      method,
+      credentials: 'same-origin',
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
     });
   } catch {
     throw new Error('No se pudo conectar con la API. Intenta de nuevo.');
   }
   const payload = await response.json().catch(() => null);
-  if (response.status === 401 && requestToken && requestToken === token) signOut();
+  if (response.status === 401 && requestUser && requestUser === user) {
+    endSession('Tu sesión venció. Vuelve a iniciar sesión.');
+  }
   if (!response.ok || payload?.success !== true) {
-    throw new Error(payload?.message || 'La API no pudo completar la solicitud.');
+    const error = new Error(payload?.message || 'La API no pudo completar la solicitud.');
+    error.status = response.status;
+    error.data = payload?.data;
+    throw error;
   }
   return payload;
 }
@@ -94,17 +100,41 @@ function showSession(active) {
   for (const id of ['dashboard', 'navigation', 'logout']) byId(id).hidden = !active;
 }
 
-function signOut() {
-  token = '';
+function endSession(message = '') {
+  user = null;
   viewRequest++;
   filters.reset();
   results.replaceChildren();
   if (dialog.open) dialog.close();
   if (deleteDialog.open) deleteDialog.close();
-  pendingDeletion = null;
+  if (detailDialog.open) detailDialog.close();
+  if (editorDialog.open) editorDialog.close();
+  pendingConfirmation = null;
   closeUpdateFeedback();
+  unreadCount([]);
   showSession(false);
-  notice();
+  showAuthForm(auth, false);
+  notice(message);
+}
+
+async function signOut() {
+  const logout = byId('logout');
+  logout.disabled = true;
+  try {
+    await request('/usuarios/logout', 'POST');
+    endSession('Sesión cerrada.');
+  } catch (error) {
+    if (user) notice(error.message, true);
+  } finally {
+    logout.disabled = false;
+  }
+}
+
+function startSession(profile) {
+  if (!profile?._id) throw new Error('No se pudo obtener el perfil de la sesión.');
+  user = profile;
+  showSession(true);
+  return selectView('home');
 }
 
 auth.addEventListener('submit', async event => {
@@ -122,11 +152,8 @@ auth.addEventListener('submit', async event => {
       notice('Cuenta creada. Ya puedes iniciar sesión.');
       return;
     }
-    const response = await request('/usuarios/login', 'POST', credentials);
-    if (!response.data?.token) throw new Error('La API no devolvió el token de sesión.');
-    token = response.data.token;
-    showSession(true);
-    await selectView('inventory');
+    const response = await request('/usuarios/login', 'POST', { ...credentials, sesion_web: true });
+    await startSession(response.data?.perfil);
   } catch (error) {
     notice(error.message, true);
   } finally {
@@ -266,6 +293,7 @@ function renderInventory(lots, products) {
     actions.setAttribute('role', 'cell');
     actions.className = 'row-actions';
     actions.append(
+      action('Ver lote', () => openLotDetail(lot._id)),
       action('Editar', () => openLot(lot)),
       action('Eliminar', event => deleteLot(lot._id, name, event.currentTarget), 'text-button danger')
     );
@@ -273,33 +301,25 @@ function renderInventory(lots, products) {
   results.replaceChildren(table);
 }
 
-function renderList(items, isPlan) {
-  results.replaceChildren(...items.map(item => {
-    const card = document.createElement('article');
-    card.className = 'list-item';
-    const name = isPlan ? item.nombre_receta : item.mensaje;
-    const detail = isPlan ? item.ingrediente_nombre : formatDate(item.fecha);
-    card.append(element('strong', name), element('p', detail, 'muted'));
-    return card;
-  }));
-}
-
 async function loadView() {
-  if (!token) return;
+  if (!user) return;
   const generation = ++viewRequest;
-  const view = views[currentView];
+  const view = currentView;
   const inventory = currentView === 'inventory';
-  const plans = currentView === 'plans';
   results.replaceChildren(element('p', 'Cargando…', 'muted'));
   try {
+    if (!inventory) {
+      const page = await dashboard.load(view);
+      if (generation === viewRequest) results.replaceChildren(page);
+      return;
+    }
     const [items, products] = await Promise.all([
-      request(view.endpoint + (inventory ? inventoryQuery() : '')),
-      inventory ? request('/productos').catch(() => ({ data: [] })) : null
+      request('/inventario' + inventoryQuery()),
+      request('/productos').catch(() => ({ data: [] }))
     ]);
     if (generation !== viewRequest) return;
-    if (!items.data.length) results.replaceChildren(element('p', view.empty, 'muted'));
-    else if (inventory) renderInventory(items.data, products.data);
-    else renderList(items.data, plans);
+    if (!items.data.length) results.replaceChildren(element('p', 'No hay lotes para mostrar.', 'muted'));
+    else renderInventory(items.data, products.data);
   } catch (error) {
     if (generation !== viewRequest) return;
     const message = element('p', error.message + ' ');
@@ -310,7 +330,7 @@ async function loadView() {
 
 function selectView(view) {
   currentView = view;
-  byId('view-title').textContent = views[view].title;
+  byId('view-title').textContent = views[view];
   byId('add').hidden = filters.hidden = view !== 'inventory';
   for (const button of navButtons) {
     if (button.dataset.view === view) button.setAttribute('aria-current', 'page');
@@ -329,9 +349,9 @@ filters.addEventListener('reset', () => queueMicrotask(() => {
   if (currentView === 'inventory') void loadView();
 }));
 
-function fillSelect(name, records, label, selected) {
+function fillSelect(name, records, label, selected, placeholder = 'Selecciona una opción') {
   const select = field(lotForm, name);
-  select.replaceChildren(new Option('Selecciona una opción', ''));
+  select.replaceChildren(new Option(placeholder, ''));
   for (const record of records) select.add(new Option(label(record), record._id));
   if (selected && !records.some(record => record._id === selected)) select.add(new Option(selected, selected));
   select.value = selected || '';
@@ -343,16 +363,18 @@ function lotError(message = '') {
 }
 
 async function openLot(lot) {
-  if (!token || dialog.open) return;
+  if (!user || dialog.open) return;
   const generation = viewRequest;
   const add = byId('add');
   add.disabled = true;
   notice();
   try {
-    const [products, units] = await Promise.all([request('/productos'), request('/unidades_medida')]);
+    const [products, units, ingredients] = await Promise.all([
+      request('/productos'), request('/unidades_medida'), request('/ingredientes')
+    ]);
     if (generation !== viewRequest || dialog.open) return;
     if (!lot && (!products.data.length || !units.data.length)) {
-      throw new Error('Registra al menos un producto y una unidad de medida en Swagger.');
+      throw new Error('El catálogo necesita al menos un producto y una unidad de medida. Puedes consultarlo en Catálogo.');
     }
     lotForm.reset();
     lotError();
@@ -360,6 +382,7 @@ async function openLot(lot) {
     byId('lot-title').textContent = editingId ? 'Editar lote' : 'Agregar lote';
     fillSelect('producto_id', products.data, product => product.nombre, lot?.producto_id);
     fillSelect('unidad_medida_nombre', units.data, unit => unit._id, lot?.unidad_medida_nombre);
+    fillSelect('ingrediente_nombre', ingredients.data, ingredient => ingredient._id, lot?.ingrediente_nombre, 'Sin ingrediente');
     if (lot) {
       for (const name of ['nevera_id', 'cantidad', 'estado']) field(lotForm, name).value = lot[name];
       if (lot.fecha_vencimiento) {
@@ -372,6 +395,87 @@ async function openLot(lot) {
     if (generation === viewRequest) notice(error.message, true);
   } finally {
     add.disabled = false;
+  }
+}
+
+function showDetails(title, entries, buttons = []) {
+  if (!user || detailDialog.open) return;
+  const list = document.createElement('dl');
+  list.className = 'detail-list';
+  for (const [label, value] of entries) {
+    list.append(element('dt', label), element('dd', value));
+  }
+  const content = byId('detail-content');
+  content.replaceChildren(list);
+  if (buttons.length) {
+    const actions = element('div', '', 'detail-actions');
+    actions.append(...buttons);
+    content.append(actions);
+  }
+  byId('detail-error').hidden = true;
+  byId('detail-error').textContent = '';
+  byId('detail-title').textContent = title;
+  detailDialog.showModal();
+}
+
+async function changeLotStatus(id, status) {
+  const buttons = [...detailDialog.querySelectorAll('button')];
+  for (const button of buttons) button.disabled = true;
+  const errorNotice = byId('detail-error');
+  errorNotice.hidden = true;
+  try {
+    const response = await request('/inventario/' + encodeURIComponent(id), 'PUT', { estado: status });
+    detailDialog.close();
+    notice(response.message);
+    await loadView();
+  } catch (error) {
+    if (detailDialog.open) {
+      errorNotice.textContent = error.message;
+      errorNotice.hidden = false;
+    } else if (user) {
+      notice(error.message, true);
+    }
+  } finally {
+    for (const button of buttons) button.disabled = false;
+  }
+}
+
+detailDialog.addEventListener('cancel', event => {
+  if (detailDialog.querySelector('.detail-actions button:disabled')) event.preventDefault();
+});
+
+async function openLotDetail(id) {
+  if (!user || detailDialog.open) return;
+  const generation = viewRequest;
+  try {
+    const [item, products] = await Promise.all([
+      request('/inventario/' + encodeURIComponent(id)), request('/productos').catch(() => ({ data: [] }))
+    ]);
+    if (generation !== viewRequest) return;
+    const lot = item.data;
+    const name = products.data.find(product => product._id === lot.producto_id)?.nombre ?? lot.producto_id;
+    const buttons = [action('Editar lote', () => {
+      detailDialog.close();
+      void openLot(lot);
+    }, 'secondary')];
+    if (lot.estado === 'EN_NEVERA') {
+      buttons.push(
+        action('Marcar consumido', () => changeLotStatus(lot._id, 'CONSUMIDO'), 'primary'),
+        action('Marcar desperdiciado', () => changeLotStatus(lot._id, 'DESPERDICIADO'), 'secondary')
+      );
+    }
+    showDetails(name, [
+      ['Cantidad', numberFormat.format(lot.cantidad) + ' ' + lot.unidad_medida_nombre],
+      ['Nevera', lot.nevera_id],
+      ['Vencimiento', formatDate(lot.fecha_vencimiento)],
+      ['Estado', states[lot.estado] ?? lot.estado],
+      ['Ingrediente para sugerencias', lot.ingrediente_nombre || 'Sin ingrediente']
+    ], buttons);
+  } catch (error) {
+    if (generation === viewRequest) {
+      const unavailable = error.data?.recurso === 'Inventario';
+      notice(unavailable ? 'Este lote ya no está disponible en tu inventario.' : error.message, true);
+    }
   }
 }
 
@@ -390,6 +494,7 @@ lotForm.addEventListener('submit', async event => {
   const lotId = editingId;
   body.cantidad = Number(body.cantidad);
   body.fecha_vencimiento = body.fecha_vencimiento ? body.fecha_vencimiento + '-05:00' : null;
+  body.ingrediente_nombre = body.ingrediente_nombre || null;
   try {
     const endpoint = lotId ? '/inventario/' + encodeURIComponent(lotId) : '/inventario';
     const response = await request(endpoint, lotId ? 'PUT' : 'POST', body);
@@ -410,20 +515,28 @@ lotForm.addEventListener('submit', async event => {
 });
 
 function deleteLot(id, name, button) {
-  if (!token || deleteDialog.open) return;
-  byId('delete-product').textContent = name;
-  pendingDeletion = { id, button };
+  const message = document.createDocumentFragment();
+  message.append('Se eliminará el lote de ', element('strong', name), '. Esta acción no se puede deshacer.');
+  confirmAction('¿Estás seguro de eliminar este lote?', message, 'Eliminar lote', () => removeLot(id, button));
+}
+
+function confirmAction(title, message, label, onConfirm) {
+  if (!user || deleteDialog.open) return;
+  byId('delete-title').textContent = title;
+  byId('delete-description').replaceChildren(message);
+  deleteDialog.querySelector('[value="confirm"]').textContent = label;
+  pendingConfirmation = onConfirm;
   deleteDialog.showModal();
 }
 
-deleteDialog.addEventListener('cancel', () => { pendingDeletion = null; });
+deleteDialog.addEventListener('cancel', () => { pendingConfirmation = null; });
 deleteDialog.querySelector('form').addEventListener('submit', event => {
   event.preventDefault();
-  const selection = pendingDeletion;
-  pendingDeletion = null;
+  const confirm = pendingConfirmation;
+  pendingConfirmation = null;
   deleteDialog.close();
-  if (event.submitter?.value === 'confirm' && selection && token) {
-    void removeLot(selection.id, selection.button);
+  if (event.submitter?.value === 'confirm' && confirm && user) {
+    void confirm();
   }
 });
 
@@ -439,3 +552,54 @@ async function removeLot(id, button) {
     button.disabled = false;
   }
 }
+
+function unreadCount(notifications) {
+  const count = notifications.filter(item => !item.leida).length;
+  const badge = byId('unread-count');
+  badge.hidden = count === 0;
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.setAttribute('aria-label', `${count} notificaciones sin leer`);
+}
+
+const dashboard = createDashboard({
+  request, element, action, formatDate, notice, confirmAction, showDetails, openLotDetail,
+  getProfile: () => user,
+  reload: loadView,
+  navigate: selectView,
+  onNotifications: unreadCount,
+  onProfileSaved(profile, passwordChanged) {
+    if (passwordChanged) {
+      endSession('Contraseña cambiada. Inicia sesión con la nueva contraseña.');
+    } else if (user) {
+      user = { ...user, ...profile };
+    }
+  }
+});
+
+async function restoreSession() {
+  const submit = byId('auth-submit');
+  submit.disabled = true;
+  try {
+    const response = await request('/usuarios/me');
+    await startSession(response.data);
+  } catch (error) {
+    if (error.status !== 401) notice(error.message, true);
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function refreshUnread() {
+  const active = user;
+  if (!active || document.hidden) return;
+  try {
+    const response = await request('/notificaciones');
+    if (user === active) unreadCount(response.data);
+  } catch {
+    // The inbox retries on navigation if background refresh fails.
+  }
+}
+
+window.addEventListener('focus', refreshUnread);
+setInterval(refreshUnread, 60 * 1000);
+if (incomingToken === null) void restoreSession();

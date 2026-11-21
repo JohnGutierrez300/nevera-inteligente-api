@@ -5,7 +5,7 @@ const nodemailer = require('nodemailer');
 const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const YAML = require('yamljs');
-const { randomBytes, randomInt } = require('node:crypto');
+const { randomBytes, randomInt, randomUUID } = require('node:crypto');
 const { huella, protegerClave, verificarClave } = require('./credenciales');
 require('dotenv').config();
 
@@ -203,6 +203,7 @@ const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
   nevera_id: { type: String, required: true, default: NEVERA_PREDETERMINADA },
   producto_id: { type: String, ref: 'Producto', required: true },
+  ingrediente_nombre: { type: String, ref: 'Ingrediente', default: null },
   unidad_medida_nombre: { type: String, ref: 'UnidadMedida', required: true },
   cantidad: { type: Number, required: true, min: 0, validate: Number.isFinite },
   fecha_vencimiento: { type: Date, default: null },
@@ -224,8 +225,8 @@ HistorialInventario.schema.index({ 'snapshot_datos.user_nombre': 1, fecha: -1 })
 const PatronPredictivo = mongoose.model('PatronPredictivo', new mongoose.Schema({
   _id: { type: String, required: true },
   user_nombre: { type: String, ref: 'Usuario', required: true },
-  frecuencia_compra_dias: { type: Number },
-  probabilidad_desperdicio: { type: Number }
+  frecuencia_compra_dias: { type: Number, min: 1, validate: Number.isInteger },
+  probabilidad_desperdicio: { type: Number, min: 0, max: 1 }
 }, { collection: 'patrones_predictivos', _id: false, versionKey: false }));
 
 const Ingrediente = mongoose.model('Ingrediente', new mongoose.Schema({
@@ -246,22 +247,57 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
   tipo: { type: String, enum: ['VENCIMIENTO', 'STOCK_BAJO', 'SUGERENCIA'], default: 'SUGERENCIA' },
   nevera_id: String,
   inventario_id: mongoose.Schema.Types.ObjectId,
+  fecha_vencimiento: Date,
   leida: { type: Boolean, default: false },
   fecha: { type: Date, default: Date.now }
 }, { collection: 'notificaciones', versionKey: false }));
 
 const DURACION_SESION_MS = 24 * 60 * 60 * 1000;
 const CLAVE_SEGURA = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,1024}$/;
+const NOMBRE_COOKIE = 'nevera_session';
+const ADMINISTRADORES_CATALOGO = new Set(
+  (process.env.CATALOG_ADMIN_IDS ?? '').split(',').map(id => id.trim()).filter(Boolean)
+);
+
+function opcionesCookieSesion(req) {
+  const local = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(req.hostname);
+  return { httpOnly: true, secure: !local, sameSite: 'strict', path: '/api' };
+}
+
+function exigirOrigenWeb(req) {
+  const protocolo = opcionesCookieSesion(req).secure ? 'https' : 'http';
+  const origen = `${protocolo}://${req.get('host')}`;
+  if (!URL.canParse(origen) || req.get('origin') !== new URL(origen).origin) {
+    throw new ApiError(403, 'Abre la aplicación desde su dirección habitual e inténtalo de nuevo.');
+  }
+}
+
+function tokenCookie(req) {
+  const cookies = req.get('cookie') ?? '';
+  for (const cookie of cookies.split(';')) {
+    const coincidencia = /^nevera_session=([a-f0-9]{64})$/.exec(cookie.trim());
+    if (coincidencia) return coincidencia[1];
+  }
+  return null;
+}
 
 async function autenticar(req, res, next) {
-  const token = /^Bearer ([a-f0-9]{64})$/i.exec(req.get('authorization') || '');
-  const sesion = token && await Sesion.findOne({ _id: huella(token[1]), vence: { $gt: new Date() } }).lean();
+  const autorizacion = req.get('authorization');
+  const token = autorizacion === undefined ? tokenCookie(req) : /^Bearer ([a-f0-9]{64})$/i.exec(autorizacion)?.[1];
+  const sesionWeb = autorizacion === undefined && !!token;
+  if (sesionWeb && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) exigirOrigenWeb(req);
+  const sesion = token && await Sesion.findOne({ _id: huella(token), vence: { $gt: new Date() } }).lean();
   const usuario = sesion && await Usuario.findById(sesion.usuario).select('+password_hash').lean();
   if (typeof usuario?.password_hash !== 'string' || huella(usuario.password_hash) !== sesion.credencial) {
+    if (sesionWeb) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
     res.set('WWW-Authenticate', 'Bearer');
     throw new ApiError(401, 'Inicia sesión y proporciona un token válido');
   }
   req.usuarioId = usuario._id;
+  req.usuario = usuario;
+  req.sesionWeb = sesionWeb;
+  req.sesionId = sesion._id;
+  res.set('Cache-Control', 'no-store');
   next();
 }
 
@@ -381,7 +417,8 @@ app.get('/api/validaciones/:coleccion/:id', async (req, res, next) => {
 // ==========================================
 
 app.post('/api/usuarios/login', async (req, res) => {
-  const { id, nombre, password, password_hash } = req.body ?? {};
+  const { id, nombre, password, password_hash, sesion_web } = req.body ?? {};
+  if (sesion_web === true) exigirOrigenWeb(req);
   const clave = password ?? password_hash;
   const filtro = idCompatible(Usuario, id) ? { _id: id }
     : typeof nombre === 'string' && nombre.trim() ? { nombre }
@@ -406,12 +443,17 @@ app.post('/api/usuarios/login', async (req, res) => {
   const vence = new Date(Date.now() + DURACION_SESION_MS);
   await Sesion.create({ _id: huella(token), usuario: usuario._id, credencial: huella(usuario.password_hash), vence });
   res.set('Cache-Control', 'no-store');
+  if (sesion_web === true) {
+    res.cookie(NOMBRE_COOKIE, token, { ...opcionesCookieSesion(req), maxAge: DURACION_SESION_MS });
+    return res.status(200).json(responseFormat(true, 'Sesión iniciada', { perfil: perfilWeb(usuario), vence }));
+  }
   res.status(200).json(responseFormat(true, 'Sesión iniciada', { token, vence }));
 });
 
 const RECUPERACION_DURACION_MS = 30 * 60 * 1000;
 const RECUPERACION_ESPERA_MS = 2 * 60 * 1000;
 const CAMPOS_ENLACE_RECUPERACION = { recuperacion_hash: 1, recuperacion_vence: 1 };
+const correoValido = email => typeof email === 'string' && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
 function configurarRecuperacion() {
   const { GMAIL_USER, GMAIL_APP_PASSWORD, PASSWORD_RESET_URL } = process.env;
@@ -474,7 +516,7 @@ async function enviarRecuperacion(email, configuracion) {
 
 app.post('/api/usuarios/recuperar-contrasena', (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
-  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (!correoValido(email)) {
     throw new ApiError(400, 'Ingresa un correo electrónico válido.');
   }
   const configuracion = configurarRecuperacion();
@@ -513,15 +555,34 @@ app.use('/api', (req, res, next) => {
   const privados = ['usuarios', 'inventario', 'historial_inventario', 'patrones_predictivos', 'meal_preps', 'notificaciones'];
   const catalogos = ['categorias', 'marcas', 'unidades_medida', 'productos', 'ingredientes'];
   const altaUsuario = recurso === 'usuarios' && !id && req.method === 'POST';
-  const escritura = ['POST', 'PUT', 'DELETE'].includes(req.method);
-  if (altaUsuario || (!privados.includes(recurso) && !(escritura && catalogos.includes(recurso)))) return next();
-  return autenticar(req, res, next);
+  const modificaCatalogo = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && catalogos.includes(recurso);
+  if (altaUsuario || (!privados.includes(recurso) && !modificaCatalogo)) return next();
+  return autenticar(req, res, () => {
+    if (modificaCatalogo && !ADMINISTRADORES_CATALOGO.has(req.usuarioId)) {
+      throw new ApiError(403, 'Solo los administradores pueden modificar el catálogo compartido.');
+    }
+    next();
+  });
 });
 
 function usuarioPublico(usuario) {
   const { _id, nombre, email } = usuario;
   return { _id, nombre, email };
 }
+
+function perfilWeb(usuario) {
+  return { ...usuarioPublico(usuario), catalogo_admin: ADMINISTRADORES_CATALOGO.has(usuario._id) };
+}
+
+app.get('/api/usuarios/me', (req, res) => {
+  res.status(200).json(responseFormat(true, 'Perfil obtenido', perfilWeb(req.usuario)));
+});
+
+app.post('/api/usuarios/logout', async (req, res) => {
+  await Sesion.deleteOne({ _id: req.sesionId });
+  res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
+  res.status(200).json(responseFormat(true, 'Sesión cerrada'));
+});
 
 async function idUsuarioRetirado(id) {
   return await IdUsuarioRetirado.exists({ _id: id })
@@ -539,7 +600,9 @@ async function generarIdUsuario() {
 // 1. Usuarios
 app.post('/api/usuarios', async (req, res, next) => {
   try {
-    const { id, nombre, email, password, password_hash } = req.body ?? {};
+    const { id, nombre: nombreEnviado, email: emailEnviado, password, password_hash } = req.body ?? {};
+    const nombre = typeof nombreEnviado === 'string' ? nombreEnviado.trim() : '';
+    const email = typeof emailEnviado === 'string' ? emailEnviado.trim() : '';
     const clave = password ?? password_hash;
     const idManual = id === undefined ? null : String(id);
 
@@ -547,7 +610,7 @@ app.post('/api/usuarios', async (req, res, next) => {
       return res.status(200).json(responseFormat(false, 'El ID del usuario debe ser un valor numérico.', null));
     }
 
-    if (typeof nombre !== 'string' || !nombre.trim() || typeof email !== 'string' || !email.trim()) {
+    if (!nombre || !correoValido(email)) {
       return res.status(200).json(responseFormat(false, 'Ingresa el nombre de usuario y el correo electrónico.', null));
     }
 
@@ -614,18 +677,35 @@ app.get('/api/usuarios/:id', async (req, res, next) => {
 app.put('/api/usuarios/:id', async (req, res, next) => {
   try {
     const usuarioId = req.params.id;
-    const { nombre, email, password, password_hash } = req.body;
+    const { nombre, email, password, password_hash, password_actual } = req.body ?? {};
     const clave = password ?? password_hash;
     exigirPropietario(req.usuarioId, usuarioId);
 
     await obtenerOFallar(Usuario, usuarioId);
 
+    if (nombre !== undefined && (typeof nombre !== 'string' || !nombre.trim())) {
+      throw new ApiError(400, 'Ingresa un nombre de usuario válido.');
+    }
+    if (email !== undefined && !correoValido(typeof email === 'string' ? email.trim() : email)) {
+      throw new ApiError(400, 'Ingresa un correo electrónico válido.');
+    }
+
+    const datosActualizados = {};
+    if (nombre !== undefined) datosActualizados.nombre = nombre.trim();
+    if (email !== undefined) datosActualizados.email = email.trim();
+    const cambiaCredenciales = (email !== undefined && datosActualizados.email !== req.usuario.email) || clave !== undefined;
+    if (req.sesionWeb && cambiaCredenciales) {
+      const actualValida = typeof password_actual === 'string' && password_actual.length <= 1024
+        && (await verificarClave(password_actual, req.usuario.password_hash)).valida;
+      if (!actualValida) throw new ApiError(403, 'Confirma tu contraseña actual para guardar este cambio.');
+    }
+
     if (nombre || email) {
       const conflicto = await Usuario.findOne({
         _id: { $ne: usuarioId },
         $or: [
-          ...(nombre ? [{ nombre }] : []),
-          ...(email ? [{ email }] : [])
+          ...(nombre ? [{ nombre: datosActualizados.nombre }] : []),
+          ...(email ? [{ email: datosActualizados.email }] : [])
         ]
       });
       if (conflicto) {
@@ -639,15 +719,19 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
       }
     }
 
-    const datosActualizados = {};
-    if (nombre) datosActualizados.nombre = nombre;
-    if (email) datosActualizados.email = email;
     if (clave !== undefined) datosActualizados.password_hash = await protegerClave(clave);
 
+    if (!Object.keys(datosActualizados).length) {
+      return res.status(200).json(responseFormat(true, 'Perfil obtenido', usuarioPublico(req.usuario)));
+    }
     const cambios = { $set: datosActualizados };
-    if (email || clave !== undefined) cambios.$unset = CAMPOS_ENLACE_RECUPERACION;
-    const usuarioActualizado = await Usuario.findByIdAndUpdate(usuarioId, cambios, { returnDocument: 'after', runValidators: true });
-    res.status(200).json(responseFormat(true, 'Usuario actualizado exitosamente', usuarioActualizado));
+    if (cambiaCredenciales) cambios.$unset = CAMPOS_ENLACE_RECUPERACION;
+    const filtro = { _id: usuarioId };
+    if (req.sesionWeb && cambiaCredenciales) filtro.password_hash = req.usuario.password_hash;
+    const usuarioActualizado = await Usuario.findOneAndUpdate(filtro, cambios, { returnDocument: 'after', runValidators: true });
+    if (!usuarioActualizado) throw new ApiError(401, 'La sesión cambió. Vuelve a iniciar sesión.');
+    if (req.sesionWeb && clave !== undefined) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
+    res.status(200).json(responseFormat(true, 'Usuario actualizado exitosamente', usuarioPublico(usuarioActualizado)));
   } catch (error) {
     next(error);
   }
@@ -839,13 +923,14 @@ function registrarHistorial(item, accion, detalles) {
 mutacion('post', '/api/inventario', async req => {
   const {
     user_nombre, nevera_id = NEVERA_PREDETERMINADA, producto_id, unidad_medida_nombre,
-    cantidad, fecha_vencimiento, estado = 'EN_NEVERA'
+    cantidad, fecha_vencimiento, ingrediente_nombre, estado = 'EN_NEVERA'
   } = req.body;
   exigirPropietario(req.usuarioId, user_nombre);
   const lote = {
     user_nombre: req.usuarioId,
     nevera_id,
     producto_id,
+    ingrediente_nombre: ingrediente_nombre === '' ? null : ingrediente_nombre ?? null,
     unidad_medida_nombre,
     fecha_vencimiento: fecha_vencimiento == null ? null : fechaInventario(fecha_vencimiento),
     estado
@@ -873,9 +958,17 @@ mutacion('post', '/api/inventario', async req => {
 
 app.get('/api/inventario', async (req, res, next) => {
   try {
-    const { user_nombre, nevera_id, estado, vence_desde, vence_hasta, orden } = req.query;
+    const { user_nombre, nevera_id, estado, vence_desde, vence_hasta, orden, busqueda } = req.query;
     exigirPropietario(req.usuarioId, user_nombre);
     const filtro = { user_nombre: req.usuarioId };
+    if (busqueda !== undefined) {
+      if (typeof busqueda !== 'string' || busqueda.length > 100) throw new ApiError(400, 'Escribe un nombre de producto válido.');
+      const texto = busqueda.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (texto) {
+        const patron = new RegExp(texto, 'i');
+        filtro.producto_id = { $in: await Producto.distinct('_id', { $or: [{ _id: patron }, { nombre: patron }] }) };
+      }
+    }
     if (nevera_id !== undefined) {
       if (typeof nevera_id !== 'string' || !nevera_id.trim()) throw new ApiError(400, 'Envía una nevera válida');
       filtro.nevera_id = nevera_id;
@@ -921,10 +1014,11 @@ app.get('/api/inventario/:itemId', async (req, res, next) => {
 
 mutacion('put', '/api/inventario/:itemId', async req => {
   exigirPropietario(req.usuarioId, req.body.user_nombre);
-  const campos = ['nevera_id', 'producto_id', 'unidad_medida_nombre', 'cantidad', 'fecha_vencimiento', 'estado'];
+  const campos = ['nevera_id', 'producto_id', 'unidad_medida_nombre', 'cantidad', 'fecha_vencimiento', 'estado', 'ingrediente_nombre'];
   const cambios = Object.fromEntries(campos.filter(campo => Object.hasOwn(req.body, campo))
     .map(campo => [campo, req.body[campo]]));
   if (cambios.fecha_vencimiento != null) cambios.fecha_vencimiento = fechaInventario(cambios.fecha_vencimiento);
+  if (cambios.ingrediente_nombre === '') cambios.ingrediente_nombre = null;
   const filtro = { user_nombre: req.usuarioId };
   await obtenerOFallar(Inventario, req.params.itemId, filtro);
   await validarReferencias(Inventario, cambios);
@@ -1039,20 +1133,44 @@ mutacion('delete', '/api/ingredientes/:id', async req => {
 });
 
 // 10. Meal Preps
-mutacion('post', '/api/meal_preps', async req => {
-  try {
-    const { patron_predictivo_id, ingrediente_nombre, nombre_receta } = req.body;
-    await validarReferencias(MealPrep, { patron_predictivo_id, ingrediente_nombre });
-    await obtenerOFallar(PatronPredictivo, patron_predictivo_id, { user_nombre: req.usuarioId });
-    const nuevoMealPrep = new MealPrep({ patron_predictivo_id, ingrediente_nombre, nombre_receta });
-    await nuevoMealPrep.save();
-    return responseFormat(true, 'Plan de comidas creado exitosamente', nuevoMealPrep);
-  } catch (error) {
-    if (error.code === 11000) {
-      throw new ApiError(200, 'Ya existe un plan de comidas asociado a este patrón predictivo.');
-    }
-    throw error;
+async function datosPlan(body, usuarioId, anterior) {
+  const { patron, patron_predictivo_id, ingrediente_nombre, nombre_receta } = body ?? {};
+  const nombre = nombre_receta ?? anterior?.nombre_receta;
+  const ingrediente = ingrediente_nombre ?? anterior?.ingrediente_nombre;
+  if (typeof nombre !== 'string' || !nombre.trim() || typeof ingrediente !== 'string' || !ingrediente.trim()) {
+    throw new ApiError(400, 'Ingresa el nombre del plan y elige un ingrediente.');
   }
+  await validarReferencias(MealPrep, { ingrediente_nombre: ingrediente });
+
+  let patronId = patron_predictivo_id ?? anterior?.patron_predictivo_id;
+  if (patron !== undefined) {
+    if (!patron || typeof patron !== 'object' || Array.isArray(patron) || patron_predictivo_id != null) {
+      throw new ApiError(400, 'Elige un patrón existente o ingresa un patrón nuevo.');
+    }
+    const { frecuencia_compra_dias, probabilidad_desperdicio } = patron;
+    const nuevo = await PatronPredictivo.create({
+      _id: `PATRON-${randomUUID()}`,
+      user_nombre: usuarioId,
+      frecuencia_compra_dias,
+      probabilidad_desperdicio
+    });
+    patronId = nuevo._id;
+  } else {
+    if (!patronId) throw new ApiError(400, 'Elige un patrón de compra para el plan.');
+    await obtenerOFallar(PatronPredictivo, patronId, { user_nombre: usuarioId });
+  }
+  const filtro = { patron_predictivo_id: patronId };
+  if (anterior) filtro._id = { $ne: anterior._id };
+  if (await MealPrep.exists(filtro)) {
+    throw new ApiError(200, 'Ya existe un plan de comidas asociado a este patrón predictivo.');
+  }
+  return { patron_predictivo_id: patronId, ingrediente_nombre: ingrediente, nombre_receta: nombre.trim() };
+}
+
+mutacion('post', '/api/meal_preps', async req => {
+  const datos = await datosPlan(req.body, req.usuarioId);
+  const nuevo = await MealPrep.create(datos);
+  return responseFormat(true, 'Plan de comidas creado exitosamente', nuevo);
 });
 
 app.get('/api/meal_preps', async (req, res, next) => {
@@ -1064,6 +1182,52 @@ app.get('/api/meal_preps', async (req, res, next) => {
   }
 });
 
+const IDEAS_POR_INGREDIENTE = new Map([
+  ['leche', 'Café con leche'],
+  ['papa', 'Puré de papa'],
+  ['huevo', 'Arroz frito con huevo'],
+  ['atun', 'Ensalada de atún'],
+  ['pollo', 'Arepa rellena de pollo y aguacate'],
+  ['salchicha', 'Perro caliente'],
+  ['mora', 'Jugo de mora'],
+  ['pulpa de mora', 'Jugo de mora']
+]);
+
+app.get('/api/meal_preps/sugerencias', async (req, res) => {
+  const [lotes, planes] = await Promise.all([
+    Inventario.find({
+      user_nombre: req.usuarioId,
+      estado: 'EN_NEVERA',
+      cantidad: { $gt: 0 },
+      ingrediente_nombre: { $type: 'string' },
+      $or: [{ fecha_vencimiento: null }, { fecha_vencimiento: { $gte: new Date() } }]
+    }).select('ingrediente_nombre fecha_vencimiento').lean(),
+    filtroPropietario(MealPrep, req.usuarioId).then(filtro => MealPrep.find(filtro).lean())
+  ]);
+  lotes.sort((a, b) => (a.fecha_vencimiento?.getTime() ?? Number.MAX_SAFE_INTEGER)
+    - (b.fecha_vencimiento?.getTime() ?? Number.MAX_SAFE_INTEGER));
+  const sugerencias = [];
+  const ingredientesVistos = new Set();
+  for (const lote of lotes) {
+    const ingrediente = lote.ingrediente_nombre;
+    if (ingredientesVistos.has(ingrediente)) continue;
+    ingredientesVistos.add(ingrediente);
+    const plan = planes.find(item => item.ingrediente_nombre === ingrediente);
+    const clave = ingrediente.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+    const nombre = plan?.nombre_receta ?? IDEAS_POR_INGREDIENTE.get(clave);
+    if (nombre) {
+      sugerencias.push({
+        nombre_receta: nombre,
+        ingrediente_nombre: ingrediente,
+        inventario_id: lote._id,
+        fecha_vencimiento: lote.fecha_vencimiento ?? null,
+        plan_id: plan?._id ?? null
+      });
+    }
+  }
+  res.status(200).json(responseFormat(true, 'Sugerencias de comida obtenidas', sugerencias));
+});
+
 app.get('/api/meal_preps/:id', async (req, res, next) => {
   try {
     const mealPrep = await obtenerOFallar(MealPrep, req.params.id, await filtroPropietario(MealPrep, req.usuarioId));
@@ -1071,6 +1235,16 @@ app.get('/api/meal_preps/:id', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+mutacion('put', '/api/meal_preps/:id', async req => {
+  const filtro = await filtroPropietario(MealPrep, req.usuarioId);
+  const anterior = await obtenerOFallar(MealPrep, req.params.id, filtro);
+  const cambios = await datosPlan(req.body, req.usuarioId, anterior);
+  const actualizado = await MealPrep.findByIdAndUpdate(anterior._id, { $set: cambios }, {
+    returnDocument: 'after', runValidators: true
+  });
+  return responseFormat(true, 'Plan de comidas actualizado', actualizado);
 });
 
 mutacion('delete', '/api/meal_preps/:id', async req => {
@@ -1092,7 +1266,7 @@ app.get('/api/notificaciones', async (req, res, next) => {
   try {
     exigirPropietario(req.usuarioId, req.query.user_nombre);
     const filtro = { user_nombre: req.usuarioId };
-    const notificaciones = await Notificacion.find(filtro).lean();
+    const notificaciones = await Notificacion.find(filtro).sort({ fecha: -1, _id: -1 }).lean();
     res.status(200).json(responseFormat(true, 'Notificaciones obtenidas', notificaciones));
   } catch (error) {
     next(error);
@@ -1106,6 +1280,17 @@ app.get('/api/notificaciones/:id', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+mutacion('patch', '/api/notificaciones/:id', async req => {
+  const { leida } = req.body ?? {};
+  if (typeof leida !== 'boolean') throw new ApiError(400, 'Indica si la notificación está leída.');
+  const filtro = { user_nombre: req.usuarioId };
+  await obtenerOFallar(Notificacion, req.params.id, filtro);
+  const actualizada = await Notificacion.findOneAndUpdate({ ...filtro, _id: req.params.id }, { $set: { leida } }, {
+    returnDocument: 'after', runValidators: true
+  });
+  return responseFormat(true, leida ? 'Notificación marcada como leída' : 'Notificación marcada como pendiente', actualizada);
 });
 
 mutacion('delete', '/api/notificaciones/:id', async req => {
@@ -1157,6 +1342,7 @@ async function generarAlertasVencimiento() {
         user_nombre: item.user_nombre,
         nevera_id: item.nevera_id,
         inventario_id: item._id,
+        fecha_vencimiento: item.fecha_vencimiento,
         tipo: 'VENCIMIENTO',
         mensaje: `${producto?.nombre ?? item.producto_id} vence el ${item.fecha_vencimiento.toISOString()} en la nevera ${item.nevera_id}.`
       });

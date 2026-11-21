@@ -7,15 +7,19 @@
   <meta name="description" content="Consulta tu inventario, sus vencimientos y tus planes de comida.">
   <title>Nevera Inteligente</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="app.js" defer></script>
+  <script src="app.js" type="module"></script>
 </head>
 <body>
   <aside class="sidebar">
     <div class="brand"><span class="fridge" aria-hidden="true"></span><strong>Nevera<br>Inteligente</strong></div>
     <nav id="navigation" aria-label="Menú principal" hidden>
-      <button data-view="inventory" aria-current="page">Inventario</button>
+      <button data-view="home" aria-current="page">Inicio</button>
+      <button data-view="inventory">Inventario</button>
       <button data-view="plans">Planes de comida</button>
-      <button data-view="alerts">Notificaciones</button>
+      <button data-view="alerts">Notificaciones <span id="unread-count" class="nav-count" hidden></span></button>
+      <button data-view="history">Historial</button>
+      <button data-view="catalog">Catálogo</button>
+      <button data-view="profile">Mi cuenta</button>
     </nav>
     <button id="logout" class="logout" hidden>Cerrar sesión</button>
   </aside>
@@ -59,6 +63,7 @@
         <button id="add" class="primary">Agregar lote</button>
       </header>
       <form id="filters" class="panel filters">
+        <label>Buscar producto<input name="busqueda" type="search" maxlength="100" placeholder="Ej. Leche"></label>
         <label>Nevera<input name="nevera_id" placeholder="Todas"></label>
         <label>Estado<select name="estado"><option value="">Todos</option><option value="EN_NEVERA">En nevera</option><option value="CONSUMIDO">Consumido</option><option value="DESPERDICIADO">Desperdiciado</option></select></label>
         <label>Vence desde<input name="vence_desde" type="date"></label>
@@ -73,6 +78,7 @@
     <form id="lot-form">
       <h2 id="lot-title">Agregar lote</h2>
       <label>Producto<select name="producto_id" required></select></label>
+      <label>Ingrediente para sugerencias<select name="ingrediente_nombre"></select></label>
       <label>Nevera<input name="nevera_id" value="NEVERA-01" required></label>
       <div class="form-row">
         <label>Cantidad<input name="cantidad" type="number" min="0" step="any" required></label>
@@ -84,10 +90,29 @@
       <div class="dialog-actions"><button class="secondary" id="cancel" type="button">Cancelar</button><button class="primary" id="save-lot">Guardar</button></div>
     </form>
   </dialog>
+  <dialog id="detail-dialog" aria-labelledby="detail-title">
+    <h2 id="detail-title"></h2>
+    <div id="detail-content"></div>
+    <p id="detail-error" class="form-error" role="alert" hidden></p>
+    <form method="dialog" class="dialog-actions">
+      <button class="secondary" type="submit" autofocus>Cerrar</button>
+    </form>
+  </dialog>
+  <dialog id="editor-dialog" aria-labelledby="editor-title">
+    <form id="editor-form">
+      <h2 id="editor-title"></h2>
+      <div id="editor-fields"></div>
+      <p class="form-error" id="editor-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button id="editor-cancel" class="secondary" type="button">Cancelar</button>
+        <button id="editor-save" class="primary" type="submit">Guardar</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="delete-dialog" class="confirmation-dialog" aria-labelledby="delete-title" aria-describedby="delete-description">
     <form method="dialog">
       <h2 id="delete-title">¿Estás seguro de eliminar este lote?</h2>
-      <p id="delete-description">Se eliminará el lote de <strong id="delete-product"></strong>. Esta acción no se puede deshacer.</p>
+      <p id="delete-description">Esta acción no se puede deshacer.</p>
       <div class="dialog-actions">
         <button class="secondary" value="cancel" autofocus>Cancelar</button>
         <button class="primary delete-confirm" value="confirm">Eliminar lote</button>

@@ -9,10 +9,10 @@ info:
     - **Restricción al eliminar (409):** un recurso no puede eliminarse mientras otros registros lo referencien. La API responde `409` con el mensaje *"No se puede eliminar el registro porque está siendo utilizado en otros registros del sistema"* e indica en `data.dependencias` qué colecciones lo usan.
     - El historial de inventario es una bitácora y no bloquea eliminaciones.
     - **Validación en vivo:** al pulsar *Try it out*, los campos de ID (ruta, query y campos foráneos del body) se validan mientras se escriben o al salir del campo, sin presionar *Execute* (✅ / ❌ bajo el campo).
-    **Autenticación:** usa `POST /api/usuarios/login` y pega `data.token` en **Authorize**. Las rutas privadas solo muestran los datos de la sesión. Los catálogos tienen lectura pública y requieren sesión para modificar datos.
+    **Autenticación:** usa `POST /api/usuarios/login` y pega `data.token` en **Authorize**. La aplicación web usa una cookie de sesión del mismo origen. Las rutas privadas solo muestran los datos de la sesión. La lectura de catálogos es pública y las escrituras requieren un administrador configurado en `CATALOG_ADMIN_IDS`.
 
-    **Inventario:** la API acumula únicamente productos con el mismo usuario, nevera, unidad, estado y vencimiento. Si omites la nevera al crear, se usa NEVERA-01. Las alertas se revisan al iniciar el servidor y cada hora mientras está activo, para lotes en nevera que vencen en las próximas 72 horas.
-  version: '1.2.0'
+    **Inventario:** se acumulan los lotes del mismo producto si coinciden el usuario, la nevera, la unidad, el estado, el vencimiento y el ingrediente opcional. Si omites la nevera al crear, se usa NEVERA-01. Las alertas se revisan al iniciar el servidor y cada hora mientras está activo, para lotes en nevera que vencen en las próximas 72 horas.
+  version: '1.3.0'
 servers:
   - url: /
     description: Servidor desde el que se abrió Swagger
@@ -52,6 +52,10 @@ paths:
                   type: string
                   format: password
                   example: Ejemplo2026!Jj
+                sesion_web:
+                  type: boolean
+                  default: false
+                  description: Si es true, establece una cookie HttpOnly del mismo origen y devuelve el perfil. Swagger usa el Bearer por defecto.
       responses:
         "200":
           description: Sesión iniciada
@@ -69,6 +73,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
         "500":
           $ref: '#/components/responses/InternalError'
 
@@ -170,6 +176,34 @@ paths:
           $ref: '#/components/responses/InternalError'
         "401":
           $ref: '#/components/responses/Unauthorized'
+
+  /api/usuarios/me:
+    get:
+      security:
+        - bearerAuth: []
+      tags: [Usuarios]
+      operationId: currentUser
+      summary: Consultar el perfil de la sesión y el permiso de administrar catálogos
+      responses:
+        "200":
+          $ref: '#/components/responses/Ok'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/usuarios/logout:
+    post:
+      security:
+        - bearerAuth: []
+      tags: [Usuarios]
+      operationId: logoutUser
+      summary: Revocar la sesión actual
+      responses:
+        "200":
+          $ref: '#/components/responses/Ok'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   /api/usuarios/{id}:
     parameters:
@@ -581,6 +615,10 @@ paths:
       summary: Listar los lotes de inventario del usuario
       parameters:
         - $ref: '#/components/parameters/UsuarioIdQuery'
+        - name: busqueda
+          in: query
+          schema: { type: string, maxLength: 100 }
+          description: Busca por nombre o ID del producto.
         - name: nevera_id
           in: query
           required: false
@@ -890,6 +928,20 @@ paths:
         "401":
           $ref: '#/components/responses/Unauthorized'
 
+  /api/meal_preps/sugerencias:
+    get:
+      security:
+        - bearerAuth: []
+      tags: [Planes de Comida (Meal Preps)]
+      operationId: listMealPrepSuggestions
+      summary: Sugerir planes a partir de ingredientes vinculados a lotes disponibles
+      description: Considera lotes propios en nevera, con cantidad positiva y vigentes. Las ideas no crean planes automáticamente.
+      responses:
+        "200":
+          $ref: '#/components/responses/Ok'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
   /api/meal_preps/{id}:
     parameters:
       - $ref: '#/components/parameters/MealPrepIdPath'
@@ -904,6 +956,25 @@ paths:
           $ref: '#/components/responses/OkWithLookup'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      security:
+        - bearerAuth: []
+      tags: [Planes de Comida (Meal Preps)]
+      operationId: updateMealPrep
+      summary: Actualizar el nombre, el ingrediente o el patrón de un plan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MealPrepUpdate'
+      responses:
+        "200":
+          $ref: '#/components/responses/OkWithLookup'
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
     delete:
@@ -981,6 +1052,30 @@ paths:
           $ref: '#/components/responses/OkWithLookup'
         "500":
           $ref: '#/components/responses/InternalError'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      security:
+        - bearerAuth: []
+      tags: [Notificaciones]
+      operationId: updateNotificationReadStatus
+      summary: Marcar un aviso como leído o sin leer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [leida]
+              properties:
+                leida:
+                  type: boolean
+                  example: true
+      responses:
+        "200":
+          $ref: '#/components/responses/OkWithLookup'
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
     delete:
@@ -1278,6 +1373,10 @@ components:
           format: password
           description: Mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos
           example: Ejemplo2026!Jj
+        password_actual:
+          type: string
+          format: password
+          description: Se requiere al cambiar correo o contraseña desde una sesión web.
 
     CategoriaInput:
       type: object
@@ -1349,6 +1448,11 @@ components:
           type: string
           description: "**FK → productos._id.** Se valida en tiempo real; si el producto no existe devuelve HTTP 200 con `success: false`."
           example: PROD-001
+        ingrediente_nombre:
+          type: string
+          nullable: true
+          description: ID opcional de un ingrediente para generar sugerencias.
+          example: Leche
         unidad_medida_nombre:
           type: string
           description: "**FK → unidades_medida._id.** Se valida en tiempo real; si la unidad no existe devuelve HTTP 200 con `success: false`."
@@ -1382,6 +1486,11 @@ components:
           type: string
           description: "**FK → productos._id.** HTTP 200 con `success: false` si no existe."
           example: PROD-001
+        ingrediente_nombre:
+          type: string
+          nullable: true
+          description: Asigna un ingrediente para sugerencias o usa null para quitarlo.
+          example: Leche
         unidad_medida_nombre:
           type: string
           description: "**FK → unidades_medida._id.** HTTP 200 con `success: false` si no existe."
@@ -1410,15 +1519,26 @@ components:
           description: Si se envía, debe coincidir con el ID del usuario de la sesión.
           example: '1001'
         frecuencia_compra_dias:
-          type: number
+          type: integer
+          minimum: 1
           example: 7
         probabilidad_desperdicio:
           type: number
+          minimum: 0
+          maximum: 1
           example: 0.25
 
     MealPrepInput:
+      allOf:
+        - $ref: '#/components/schemas/MealPrepUpdate'
+        - type: object
+          required: [ingrediente_nombre, nombre_receta]
+          oneOf:
+            - required: [patron_predictivo_id]
+            - required: [patron]
+
+    MealPrepUpdate:
       type: object
-      required: [patron_predictivo_id, ingrediente_nombre, nombre_receta]
       properties:
         patron_predictivo_id:
           type: string
@@ -1431,6 +1551,19 @@ components:
         nombre_receta:
           type: string
           example: Avena con leche
+        patron:
+          type: object
+          description: Crea un patrón para este plan en la misma operación. Envíalo en lugar de patron_predictivo_id.
+          properties:
+            frecuencia_compra_dias:
+              type: integer
+              minimum: 1
+              example: 7
+            probabilidad_desperdicio:
+              type: number
+              minimum: 0
+              maximum: 1
+              example: 0.25
 
     NotificacionInput:
       type: object
