@@ -16,7 +16,7 @@ const rutaId = (path, id) => path + '/' + encodeURIComponent(id);
 const paginaHistorial = 20;
 
 export function createDashboard({
-  request, element, action, formatDate, notice, confirmAction, showDetails, openLotDetail,
+  request, element, action, passwordField, formatDate, notice, confirmAction, showDetails, openLotDetail,
   getProfile, reload, navigate, onNotifications, onProfileSaved
 }) {
   const editor = document.getElementById('editor-dialog');
@@ -70,7 +70,7 @@ export function createDashboard({
     Object.assign(input, attributes);
     const wrapper = element('label', label);
     wrapper.append(input);
-    return { wrapper, input };
+    return { wrapper: input.type === 'password' ? passwordField(wrapper, input) : wrapper, input };
   }
 
   function labelSelect(label, name, options, current = '') {

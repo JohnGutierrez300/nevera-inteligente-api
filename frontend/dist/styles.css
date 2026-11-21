@@ -254,6 +254,61 @@ label {
 
 .welcome label, #lot-form label, #editor-fields label { margin-bottom: 1.05rem; }
 
+.password-field {
+  position: relative;
+  margin-bottom: 1.05rem;
+}
+
+.welcome .password-field > label, #editor-fields .password-field > label { margin-bottom: 0; }
+.password-field input { padding-inline-end: 3.25rem; }
+.password-field input::-ms-reveal { display: none; }
+
+.password-field > .password-toggle {
+  position: absolute;
+  inset-inline-end: .125rem;
+  inset-block-end: .125rem;
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: .6rem;
+  color: var(--muted);
+  background: transparent;
+}
+
+.password-toggle:focus-visible { outline-offset: -3px; }
+
+.password-eye {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 1.2rem;
+  height: .8rem;
+  border: 2px solid currentColor;
+  border-radius: 70%;
+}
+
+.password-eye::before {
+  width: .34rem;
+  height: .34rem;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.password-toggle[aria-pressed="true"] .password-eye::after {
+  position: absolute;
+  width: 1.35rem;
+  height: 2px;
+  background: currentColor;
+  box-shadow: 0 0 0 1px #fff;
+  transform: rotate(-45deg);
+  content: "";
+}
+
 input, select {
   width: 100%;
   min-width: 0;
@@ -353,6 +408,12 @@ tr:last-child td { border-bottom: 0; }
 
 @media (hover: hover) {
   button:hover:not(:disabled) { transform: translateY(var(--button-lift)); }
+
+  .password-field > .password-toggle:hover {
+    transform: none;
+    color: var(--green);
+    background-color: #e3f0e7;
+  }
 
   .primary:hover:not(:disabled) {
     filter: brightness(1.12);

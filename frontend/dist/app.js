@@ -82,6 +82,7 @@ function showUpdateFeedback() {
 }
 
 function toggleRegistration() {
+  maskPasswords(auth);
   registering = !registering;
   byId('registration').hidden = !registering;
   field(auth, 'email').disabled = !registering;
@@ -167,7 +168,10 @@ byId('register-toggle').addEventListener('click', toggleRegistration);
 byId('logout').addEventListener('click', signOut);
 
 function showAuthForm(form, focus = true) {
-  for (const candidate of [auth, forgotForm, resetForm]) candidate.hidden = candidate !== form;
+  for (const candidate of [auth, forgotForm, resetForm]) {
+    candidate.hidden = candidate !== form;
+    if (candidate.hidden) maskPasswords(candidate);
+  }
   if (focus) form.querySelector('input').focus();
   notice();
 }
@@ -253,6 +257,36 @@ function action(label, handler, className = 'text-button') {
   button.type = 'button';
   button.addEventListener('click', handler);
   return button;
+}
+
+function setPasswordVisibility(input, toggle, visible) {
+  input.type = visible ? 'text' : 'password';
+  toggle.setAttribute('aria-pressed', String(visible));
+  toggle.title = visible ? 'Ocultar contraseña' : 'Mostrar contraseña';
+}
+
+function passwordField(label, input) {
+  const wrapper = element('div', '', 'password-field');
+  const toggle = action('', () => setPasswordVisibility(input, toggle, input.type === 'password'), 'password-toggle');
+  const labelText = label.textContent.trim().toLowerCase();
+  const description = labelText.startsWith('confirma') ? 'confirmación de contraseña' : labelText;
+  toggle.setAttribute('aria-label', 'Mostrar ' + description);
+  const icon = element('span', '', 'password-eye');
+  icon.setAttribute('aria-hidden', 'true');
+  toggle.append(icon);
+  input.spellcheck = false;
+  input.autocapitalize = 'none';
+  input.setAttribute('autocorrect', 'off');
+  setPasswordVisibility(input, toggle, false);
+  label.before(wrapper);
+  wrapper.append(label, toggle);
+  return wrapper;
+}
+
+function maskPasswords(form) {
+  for (const toggle of form.querySelectorAll('.password-toggle[aria-pressed="true"]')) {
+    setPasswordVisibility(toggle.parentElement.querySelector('input'), toggle, false);
+  }
 }
 
 function formatDate(date) {
@@ -568,7 +602,7 @@ function unreadCount(notifications) {
 }
 
 const dashboard = createDashboard({
-  request, element, action, formatDate, notice, confirmAction, showDetails, openLotDetail,
+  request, element, action, passwordField, formatDate, notice, confirmAction, showDetails, openLotDetail,
   getProfile: () => user,
   reload: loadView,
   navigate: selectView,
@@ -580,6 +614,21 @@ const dashboard = createDashboard({
       user = { ...user, ...profile };
     }
   }
+});
+
+for (const form of [auth, resetForm, byId('editor-form')]) {
+  for (const input of form.querySelectorAll('input[type="password"]')) {
+    passwordField(input.closest('label'), input);
+  }
+  form.addEventListener('submit', () => maskPasswords(form), true);
+  form.addEventListener('reset', () => maskPasswords(form));
+}
+
+editorDialog.addEventListener('close', () => {
+  if (editorDialog.open) return;
+  const form = byId('editor-form');
+  maskPasswords(form);
+  for (const input of form.querySelectorAll('.password-field input')) input.value = '';
 });
 
 async function restoreSession() {
