@@ -374,6 +374,31 @@ button:active:not(:disabled) {
   background: #fae9e7;
 }
 
+.update-feedback {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  pointer-events: none;
+}
+
+#update-feedback {
+  margin: 0;
+  padding: .9rem 1.3rem;
+  border: 1px solid #5d9774;
+  border-radius: .9rem;
+  color: #fff;
+  background: #125b44;
+  box-shadow: 0 12px 28px #12332845;
+  text-align: center;
+  font-weight: 700;
+}
+
+#update-feedback:empty { opacity: 0; }
+#update-feedback:not(:empty) { animation: enter 220ms ease-out both; }
+
 dialog {
   width: min(32rem, calc(100% - 1.5rem));
   max-height: calc(100% - 1.5rem);

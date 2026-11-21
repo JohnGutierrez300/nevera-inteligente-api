@@ -33,6 +33,7 @@ let currentView = 'inventory';
 let viewRequest = 0;
 let editingId = '';
 let pendingDeletion = null;
+let updateFeedbackTimer;
 
 async function request(path, method = 'GET', body) {
   const requestToken = token;
@@ -62,6 +63,17 @@ function notice(message = '', error = false) {
   element.hidden = !message;
 }
 
+function clearUpdateFeedback() {
+  clearTimeout(updateFeedbackTimer);
+  byId('update-feedback').textContent = '';
+}
+
+function showUpdateFeedback() {
+  clearUpdateFeedback();
+  byId('update-feedback').textContent = 'Actualizado correctamente';
+  updateFeedbackTimer = setTimeout(clearUpdateFeedback, 3000);
+}
+
 function toggleRegistration() {
   registering = !registering;
   byId('registration').hidden = !registering;
@@ -89,6 +101,7 @@ function signOut() {
   if (dialog.open) dialog.close();
   if (deleteDialog.open) deleteDialog.close();
   pendingDeletion = null;
+  clearUpdateFeedback();
   showSession(false);
   notice();
 }
@@ -373,13 +386,19 @@ lotForm.addEventListener('submit', async event => {
   save.disabled = byId('cancel').disabled = true;
   lotError();
   const body = Object.fromEntries(new FormData(lotForm));
+  const lotId = editingId;
   body.cantidad = Number(body.cantidad);
   body.fecha_vencimiento = body.fecha_vencimiento ? body.fecha_vencimiento + '-05:00' : null;
   try {
-    const endpoint = editingId ? '/inventario/' + encodeURIComponent(editingId) : '/inventario';
-    const response = await request(endpoint, editingId ? 'PUT' : 'POST', body);
+    const endpoint = lotId ? '/inventario/' + encodeURIComponent(lotId) : '/inventario';
+    const response = await request(endpoint, lotId ? 'PUT' : 'POST', body);
     dialog.close();
-    notice(response.message);
+    if (lotId) {
+      notice();
+      showUpdateFeedback();
+    } else {
+      notice(response.message);
+    }
     await loadView();
   } catch (error) {
     if (dialog.open) lotError(error.message);
