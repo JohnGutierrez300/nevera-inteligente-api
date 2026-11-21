@@ -334,11 +334,13 @@ function renderInventory(lots, products) {
     const actions = row.insertCell();
     actions.setAttribute('role', 'cell');
     actions.className = 'row-actions';
-    actions.append(
-      action('Ver lote', () => openLotDetail(lot._id)),
-      action('Editar', () => openLot(lot)),
+    const buttons = element('div', '', 'inventory-actions');
+    buttons.append(
+      action('Ver lote', () => openLotDetail(lot._id), 'text-button button-view'),
+      action('Editar', () => openLot(lot), 'text-button button-edit'),
       action('Eliminar', event => deleteLot(lot._id, name, event.currentTarget), 'text-button danger')
     );
+    actions.append(buttons);
   }
   results.replaceChildren(table);
 }
@@ -533,7 +535,7 @@ async function openLotDetail(id) {
     const buttons = [action('Editar lote', () => {
       detailDialog.close();
       void openLot(lot);
-    }, 'secondary')];
+    }, 'text-button button-edit')];
     if (lot.estado === 'EN_NEVERA') {
       buttons.push(
         action('Marcar consumido', () => changeLotStatus(lot._id, 'CONSUMIDO'), 'primary'),

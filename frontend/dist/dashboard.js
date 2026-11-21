@@ -175,7 +175,7 @@ export function createDashboard({
       const isExpired = Date.parse(lot.fecha_vencimiento) < now;
       const product = names.get(lot.producto_id) ?? lot.producto_id;
       return row(product, formatDate(lot.fecha_vencimiento) + ' · ' + lot.nevera_id,
-        [action('Ver lote', () => openLotDetail(lot._id), 'secondary')],
+        [action('Ver lote', () => openLotDetail(lot._id), 'text-button button-view')],
         badge(isExpired ? 'Vencido' : 'Vence pronto', isExpired ? 'critical' : 'warning'));
     }, 'Tus lotes vigentes no tienen vencimientos próximos.'));
     return group('panel-content', heading, upcoming);
@@ -259,10 +259,10 @@ export function createDashboard({
       data('/meal_preps'), data('/patrones_predictivos'), data('/meal_preps/sugerencias')
     ]);
     const edit = (plan, suggestion) => editPlan(plan, suggestion, patterns, items);
-    const plansSection = section('Mis planes', action('Nuevo plan', () => edit(), 'primary'));
+    const plansSection = section('Mis planes', action('Nuevo plan', () => edit(), 'primary button-add'));
     plansSection.append(list(items, plan => row(plan.nombre_receta, plan.ingrediente_nombre, [
-      action('Ver plan', () => planDetail(plan._id, patterns)),
-      action('Editar', () => edit(plan)),
+      action('Ver plan', () => planDetail(plan._id, patterns), 'text-button button-view'),
+      action('Editar', () => edit(plan), 'text-button button-edit'),
       action('Eliminar', () => remove('¿Eliminar este plan?', 'Se eliminará el plan ' + plan.nombre_receta + '.',
         'Eliminar plan', rutaId('/meal_preps', plan._id)), 'text-button danger')
     ]), 'Todavía no tienes planes de comida.'));
@@ -270,10 +270,10 @@ export function createDashboard({
     const suggestionsSection = section('Ideas según tu inventario');
     suggestionsSection.append(list(suggestions, idea => row(
       idea.nombre_receta, 'Ingrediente disponible · ' + idea.ingrediente_nombre, [
-        action('Ver lote', () => openLotDetail(idea.inventario_id)),
+        action('Ver lote', () => openLotDetail(idea.inventario_id), 'text-button button-view'),
         idea.plan_id
-          ? action('Ver plan', () => planDetail(idea.plan_id, patterns), 'secondary')
-          : action('Crear plan', () => edit(null, idea), 'secondary')
+          ? action('Ver plan', () => planDetail(idea.plan_id, patterns), 'text-button button-view')
+          : action('Crear plan', () => edit(null, idea), 'secondary button-add')
       ]
     ), 'Asocia un ingrediente para sugerencias a un lote con existencias en Inventario.'));
     return group('panel-content', plansSection, suggestionsSection);
@@ -299,7 +299,7 @@ export function createDashboard({
           action('Eliminar', () => remove('¿Eliminar esta notificación?', 'Se eliminará este aviso de tu bandeja.',
             'Eliminar aviso', endpoint), 'text-button danger')
         ];
-        if (item.inventario_id) buttons.unshift(action('Ver lote', () => openLotDetail(item.inventario_id), 'secondary'));
+        if (item.inventario_id) buttons.unshift(action('Ver lote', () => openLotDetail(item.inventario_id), 'text-button button-view'));
         return row(item.mensaje, context, buttons, badge(tipoAviso[item.tipo] ?? 'Aviso', item.tipo === 'VENCIMIENTO' ? 'warning' : ''));
       }, 'No hay notificaciones para estos filtros.');
       results.replaceChildren(...content.childNodes);
@@ -336,7 +336,7 @@ export function createDashboard({
       }
     }
     const draw = item => row(nameOf(item), formatDate(item.fecha) + ' · ' + item.detalles,
-      [action('Ver detalle', () => historyDetail(item._id), 'secondary')],
+      [action('Ver detalle', () => historyDetail(item._id), 'text-button button-view')],
       badge(movimiento[item.accion] ?? item.accion, item.accion === 'ELIMINADO' ? 'critical' : ''));
     const timeline = list(items, draw, 'Todavía no hay movimientos en tu inventario.');
     let page = 1;
@@ -400,7 +400,7 @@ export function createDashboard({
       tab.setAttribute('aria-pressed', String(key === kind));
       tabs.append(tab);
     }
-    const body = section(meta.label, admin ? action('Agregar ' + meta.singular, () => addCatalogRecord(kind), 'primary') : null);
+    const body = section(meta.label, admin ? action('Agregar ' + meta.singular, () => addCatalogRecord(kind), 'primary button-add') : null);
     const search = labelInput('Buscar en ' + meta.label.toLowerCase(), 'busqueda', { type: 'search' });
     const filters = group('feature-filters', search.wrapper);
     const results = group('feature-list');
@@ -461,7 +461,7 @@ export function createDashboard({
         onProfileSaved(response.data, true);
       });
     }
-    const heading = section('Perfil', action('Editar perfil', edit, 'primary'));
+    const heading = section('Perfil', action('Editar perfil', edit, 'primary button-edit'));
     const details = document.createElement('dl');
     details.className = 'detail-list';
     const entries = [['Usuario', account.nombre], ['Correo', account.email], ['ID de cuenta', account._id]];
