@@ -1,16 +1,19 @@
 const path = require('path');
 const express = require('express');
 const mongoose = require('mongoose');
+const nodemailer = require('nodemailer');
 const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const YAML = require('yamljs');
-const { randomBytes } = require('node:crypto');
+const { randomBytes, randomInt } = require('node:crypto');
 const { huella, protegerClave, verificarClave } = require('./credenciales');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(cors());
+
+app.use('/app', express.static(path.join(__dirname, 'frontend', 'dist')));
 
 // Redirección automática de la raíz al Swagger
 app.get('/', (req, res) => {
@@ -151,7 +154,10 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   _id: { type: String, required: true },
   nombre: { type: String, required: true, unique: true },
   email: { type: String, required: true, unique: true },
-  password_hash: { type: String, required: true, select: false }
+  password_hash: { type: String, required: true, select: false },
+  recuperacion_hash: { type: String, select: false, unique: true, sparse: true },
+  recuperacion_vence: { type: Date, select: false },
+  recuperacion_solicitada: { type: Date, select: false }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
 
 const IdUsuarioRetirado = mongoose.model('IdUsuarioRetirado', new mongoose.Schema({
@@ -375,10 +381,13 @@ app.get('/api/validaciones/:coleccion/:id', async (req, res, next) => {
 // ==========================================
 
 app.post('/api/usuarios/login', async (req, res) => {
-  const { id, password, password_hash } = req.body ?? {};
+  const { id, nombre, password, password_hash } = req.body ?? {};
   const clave = password ?? password_hash;
-  const usuario = idCompatible(Usuario, id) && typeof clave === 'string' && clave.length <= 1024
-    ? await Usuario.findById(id).select('+password_hash')
+  const filtro = idCompatible(Usuario, id) ? { _id: id }
+    : typeof nombre === 'string' && nombre.trim() ? { nombre }
+    : null;
+  const usuario = filtro && typeof clave === 'string' && clave.length <= 1024
+    ? await Usuario.findOne(filtro).select('+password_hash')
     : null;
   const resultado = usuario && await verificarClave(clave, usuario.password_hash);
   if (!resultado?.valida) throw new ApiError(401, 'Credenciales inválidas');
@@ -400,6 +409,105 @@ app.post('/api/usuarios/login', async (req, res) => {
   res.status(200).json(responseFormat(true, 'Sesión iniciada', { token, vence }));
 });
 
+const RECUPERACION_DURACION_MS = 30 * 60 * 1000;
+const RECUPERACION_ESPERA_MS = 2 * 60 * 1000;
+const CAMPOS_ENLACE_RECUPERACION = { recuperacion_hash: 1, recuperacion_vence: 1 };
+
+function configurarRecuperacion() {
+  const { GMAIL_USER, GMAIL_APP_PASSWORD, PASSWORD_RESET_URL } = process.env;
+  const remitente = GMAIL_USER?.trim();
+  const clave = GMAIL_APP_PASSWORD?.replace(/\s/g, '');
+  const enlace = URL.canParse(PASSWORD_RESET_URL ?? '') ? new URL(PASSWORD_RESET_URL) : null;
+  const urlValida = enlace && (enlace.protocol === 'https:' ||
+    (enlace.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(enlace.hostname)));
+  if (!remitente || !clave || !urlValida || enlace.username || enlace.password) {
+    throw new ApiError(503, 'La recuperación por correo todavía no está disponible.');
+  }
+  return { clave, remitente, enlace };
+}
+
+async function enviarRecuperacion(email, configuracion) {
+  const token = randomBytes(32).toString('hex');
+  const hash = huella(token);
+  const ahora = Date.now();
+  const usuario = await Usuario.findOneAndUpdate({
+    email,
+    $or: [
+      { recuperacion_solicitada: { $exists: false } },
+      { recuperacion_solicitada: { $lte: new Date(ahora - RECUPERACION_ESPERA_MS) } }
+    ]
+  }, { $set: {
+    recuperacion_hash: hash,
+    recuperacion_vence: new Date(ahora + RECUPERACION_DURACION_MS),
+    recuperacion_solicitada: new Date(ahora)
+  } }).select('email').lean();
+  if (!usuario) return;
+
+  configuracion.enlace.hash = new URLSearchParams({ restablecer: token }).toString();
+  try {
+    const transporte = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: configuracion.remitente, pass: configuracion.clave },
+      dnsTimeout: 8000,
+      connectionTimeout: 8000,
+      greetingTimeout: 8000,
+      socketTimeout: 15000
+    });
+    await transporte.sendMail({
+      from: { name: 'Nevera Inteligente', address: configuracion.remitente },
+      to: { address: usuario.email, name: '' },
+      subject: 'Restablece tu contraseña de Nevera Inteligente',
+      text: [
+        'Abre este enlace para elegir una contraseña nueva:',
+        configuracion.enlace.href,
+        'El enlace vence en 30 minutos y solo se puede usar una vez.',
+        'Si no solicitaste el cambio, puedes ignorar este correo.'
+      ].join('\n\n')
+    });
+  } catch (error) {
+    await Usuario.updateOne({ _id: usuario._id, recuperacion_hash: hash }, {
+      $unset: CAMPOS_ENLACE_RECUPERACION
+    });
+    throw error;
+  }
+}
+
+app.post('/api/usuarios/recuperar-contrasena', (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new ApiError(400, 'Ingresa un correo electrónico válido.');
+  }
+  const configuracion = configurarRecuperacion();
+  void enviarRecuperacion(email, configuracion).catch(() => {
+    console.error('No se pudo procesar un correo de recuperación.');
+  });
+  res.set('Cache-Control', 'no-store');
+  res.status(202).json(responseFormat(true, 'Si el correo está registrado, recibirás un enlace de recuperación.'));
+});
+
+app.post('/api/usuarios/restablecer-contrasena', async (req, res) => {
+  const { token, password } = req.body ?? {};
+  const mensajeEnlace = 'El enlace venció o ya fue usado. Solicita uno nuevo.';
+  if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new ApiError(400, mensajeEnlace);
+  if (typeof password !== 'string' || !CLAVE_SEGURA.test(password)) {
+    throw new ApiError(400, 'Usa entre 12 y 1024 caracteres, con mayúsculas, minúsculas, números y símbolos.');
+  }
+
+  const hash = huella(token);
+  const usuario = await Usuario.exists({ recuperacion_hash: hash, recuperacion_vence: { $gt: new Date() } });
+  if (!usuario) throw new ApiError(400, mensajeEnlace);
+  const passwordHash = await protegerClave(password);
+  const cambio = await Usuario.updateOne({
+    _id: usuario._id,
+    recuperacion_hash: hash,
+    recuperacion_vence: { $gt: new Date() }
+  }, { $set: { password_hash: passwordHash }, $unset: CAMPOS_ENLACE_RECUPERACION });
+  if (!cambio.matchedCount) throw new ApiError(400, mensajeEnlace);
+
+  res.set('Cache-Control', 'no-store');
+  res.status(200).json(responseFormat(true, 'Contraseña actualizada. Ya puedes iniciar sesión.'));
+});
+
 app.use('/api', (req, res, next) => {
   const [, recurso, id] = req.path.toLowerCase().split('/');
   const privados = ['usuarios', 'inventario', 'historial_inventario', 'patrones_predictivos', 'meal_preps', 'notificaciones'];
@@ -415,36 +523,53 @@ function usuarioPublico(usuario) {
   return { _id, nombre, email };
 }
 
+async function idUsuarioRetirado(id) {
+  return await IdUsuarioRetirado.exists({ _id: id })
+    || await HistorialInventario.exists({ 'snapshot_datos.user_nombre': id });
+}
+
+async function generarIdUsuario() {
+  for (let intento = 0; intento < 5; intento++) {
+    const id = String(randomInt(100_000_000_000_000, 200_000_000_000_000));
+    if (!await Usuario.exists({ _id: id }) && !await idUsuarioRetirado(id)) return id;
+  }
+  throw new ApiError(503, 'No se pudo asignar un ID. Intenta nuevamente.');
+}
+
 // 1. Usuarios
 app.post('/api/usuarios', async (req, res, next) => {
   try {
-    const { id, nombre, email, password, password_hash } = req.body;
+    const { id, nombre, email, password, password_hash } = req.body ?? {};
     const clave = password ?? password_hash;
-    const idAValidar = id || nombre;
+    const idManual = id === undefined ? null : String(id);
 
-    if (!/^\d+$/.test(idAValidar)) {
+    if (idManual !== null && (!idCompatible(Usuario, id) || !/^\d+$/.test(idManual))) {
       return res.status(200).json(responseFormat(false, 'El ID del usuario debe ser un valor numérico.', null));
+    }
+
+    if (typeof nombre !== 'string' || !nombre.trim() || typeof email !== 'string' || !email.trim()) {
+      return res.status(200).json(responseFormat(false, 'Ingresa el nombre de usuario y el correo electrónico.', null));
     }
 
     if (typeof clave !== 'string' || !CLAVE_SEGURA.test(clave)) {
       return res.status(200).json(responseFormat(false, 'La contraseña no cumple con los requisitos de seguridad (mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos).', null));
     }
 
-    const idUsuario = String(idAValidar);
     const passwordProtegida = await protegerClave(clave);
     const respuesta = await enTransaccion(async () => {
-      const usuarioExistente = await Usuario.exists({ $or: [{ _id: idUsuario }, { nombre }, { email }] });
+      const coincidencias = [{ nombre }, { email }];
+      if (idManual !== null) coincidencias.push({ _id: idManual });
+      const usuarioExistente = await Usuario.exists({ $or: coincidencias });
       if (usuarioExistente) {
         return responseFormat(false, 'El ID, nombre de usuario o correo electrónico ya se encuentran registrados.');
       }
 
       // Los snapshots también reservan los IDs de cuentas eliminadas antes de este cambio.
-      const idRetirado = await IdUsuarioRetirado.exists({ _id: idUsuario })
-        || await HistorialInventario.exists({ 'snapshot_datos.user_nombre': idUsuario });
-      if (idRetirado) {
+      if (idManual !== null && await idUsuarioRetirado(idManual)) {
         return responseFormat(false, 'El ID pertenece a una cuenta anterior y no se puede reutilizar.');
       }
 
+      const idUsuario = idManual ?? await generarIdUsuario();
       const nuevoUsuario = await Usuario.create({ _id: idUsuario, nombre, email, password_hash: passwordProtegida });
       return responseFormat(true, 'Usuario creado exitosamente', usuarioPublico(nuevoUsuario));
     });
@@ -519,7 +644,9 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
     if (email) datosActualizados.email = email;
     if (clave !== undefined) datosActualizados.password_hash = await protegerClave(clave);
 
-    const usuarioActualizado = await Usuario.findByIdAndUpdate(usuarioId, datosActualizados, { returnDocument: 'after', runValidators: true });
+    const cambios = { $set: datosActualizados };
+    if (email || clave !== undefined) cambios.$unset = CAMPOS_ENLACE_RECUPERACION;
+    const usuarioActualizado = await Usuario.findByIdAndUpdate(usuarioId, cambios, { returnDocument: 'after', runValidators: true });
     res.status(200).json(responseFormat(true, 'Usuario actualizado exitosamente', usuarioActualizado));
   } catch (error) {
     next(error);

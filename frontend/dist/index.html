@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Consulta tu inventario, sus vencimientos y tus planes de comida.">
+  <title>Nevera Inteligente</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand"><span class="fridge" aria-hidden="true"></span><strong>Nevera<br>Inteligente</strong></div>
+    <nav id="navigation" aria-label="Menú principal" hidden>
+      <button data-view="inventory" aria-current="page">Inventario</button>
+      <button data-view="plans">Planes de comida</button>
+      <button data-view="alerts">Notificaciones</button>
+    </nav>
+    <button id="logout" class="logout" hidden>Cerrar sesión</button>
+  </aside>
+  <main>
+    <p id="notice" role="status" aria-live="polite" hidden></p>
+    <section id="login" class="welcome">
+      <div>
+        <h1>Tu nevera,<br><em>al día.</em></h1>
+        <p>Consulta lo que tienes, revisa los vencimientos y organiza tus comidas.</p>
+      </div>
+      <form id="auth" class="panel">
+        <h2 id="auth-title">Iniciar sesión</h2>
+        <label>Usuario<input name="nombre" autocomplete="username" required></label>
+        <div id="registration" hidden>
+          <label>Correo<input name="email" type="email" autocomplete="email" disabled required></label>
+          <p>Usa al menos 12 caracteres, con mayúsculas, minúsculas, números y símbolos.</p>
+        </div>
+        <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary" id="auth-submit">Entrar</button>
+        <button class="text-button" id="forgot-toggle" type="button">¿Olvidaste tu contraseña?</button>
+        <button class="text-button" id="register-toggle" type="button">Crear una cuenta</button>
+      </form>
+      <form id="forgot-form" class="panel" hidden>
+        <h2>Recuperar contraseña</h2>
+        <label>Correo de tu cuenta<input name="email" type="email" maxlength="254" autocomplete="email" required></label>
+        <button class="primary" type="submit">Solicitar enlace</button>
+        <button class="text-button" type="button" data-auth-back>Volver al inicio de sesión</button>
+      </form>
+      <form id="reset-form" class="panel" hidden>
+        <h2>Elige una contraseña nueva</h2>
+        <p>Usa al menos 12 caracteres, con mayúsculas, minúsculas, números y símbolos.</p>
+        <label>Contraseña nueva<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required></label>
+        <label>Confirma la contraseña<input name="confirmation" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required></label>
+        <button class="primary" type="submit">Guardar contraseña</button>
+        <button class="text-button" type="button" data-auth-back>Volver al inicio de sesión</button>
+      </form>
+    </section>
+    <section id="dashboard" hidden>
+      <header class="heading">
+        <div><p class="eyebrow">Mi nevera</p><h1 id="view-title">Inventario</h1></div>
+        <button id="add" class="primary">Agregar lote</button>
+      </header>
+      <form id="filters" class="panel filters">
+        <label>Nevera<input name="nevera_id" placeholder="Todas"></label>
+        <label>Estado<select name="estado"><option value="">Todos</option><option value="EN_NEVERA">En nevera</option><option value="CONSUMIDO">Consumido</option><option value="DESPERDICIADO">Desperdiciado</option></select></label>
+        <label>Vence desde<input name="vence_desde" type="date"></label>
+        <label>Vence hasta<input name="vence_hasta" type="date"></label>
+        <button class="secondary">Filtrar</button>
+        <button class="text-button" type="reset">Limpiar</button>
+      </form>
+      <div class="panel results" id="results" aria-live="polite"></div>
+    </section>
+  </main>
+  <dialog id="lot-dialog">
+    <form id="lot-form">
+      <h2 id="lot-title">Agregar lote</h2>
+      <label>Producto<select name="producto_id" required></select></label>
+      <label>Nevera<input name="nevera_id" value="NEVERA-01" required></label>
+      <div class="form-row">
+        <label>Cantidad<input name="cantidad" type="number" min="0" step="any" required></label>
+        <label>Unidad<select name="unidad_medida_nombre" required></select></label>
+      </div>
+      <label>Vencimiento (hora de Colombia)<input name="fecha_vencimiento" type="datetime-local" step="0.001"></label>
+      <label>Estado<select name="estado"><option value="EN_NEVERA">En nevera</option><option value="CONSUMIDO">Consumido</option><option value="DESPERDICIADO">Desperdiciado</option></select></label>
+      <p id="lot-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button class="secondary" id="cancel" type="button">Cancelar</button><button class="primary" id="save-lot">Guardar</button></div>
+    </form>
+  </dialog>
+  <dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-description">
+    <form method="dialog">
+      <h2 id="delete-title">¿Estás seguro de eliminar este lote?</h2>
+      <p id="delete-description">Se eliminará el lote de <strong id="delete-product"></strong>. Esta acción no se puede deshacer.</p>
+      <div class="dialog-actions">
+        <button class="secondary" value="cancel" autofocus>Cancelar</button>
+        <button class="primary delete-confirm" value="confirm">Eliminar lote</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

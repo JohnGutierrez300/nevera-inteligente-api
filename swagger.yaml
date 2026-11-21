@@ -30,15 +30,21 @@ paths:
       tags: [Usuarios]
       operationId: loginUser
       summary: Iniciar sesión y obtener un token Bearer de 24 horas
-      description: Copia data.token y pégalo en el botón Authorize de Swagger.
+      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [id, password]
+              required: [password]
+              anyOf:
+                - required: [nombre]
+                - required: [id]
               properties:
+                nombre:
+                  type: string
+                  example: John Javier
                 id:
                   type: string
                   example: '1001'
@@ -66,12 +72,70 @@ paths:
         "500":
           $ref: '#/components/responses/InternalError'
 
+  /api/usuarios/recuperar-contrasena:
+    post:
+      tags: [Usuarios]
+      operationId: requestPasswordReset
+      summary: Solicitar un enlace de recuperación por correo
+      description: Si el correo está registrado, se envía un enlace de un solo uso que vence en 30 minutos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: usuario@example.com
+      responses:
+        "202":
+          description: Solicitud recibida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "503":
+          description: Recuperación por correo sin configurar
+
+  /api/usuarios/restablecer-contrasena:
+    post:
+      tags: [Usuarios]
+      operationId: resetPassword
+      summary: Guardar la contraseña nueva mediante el token de recuperación
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, password]
+              properties:
+                token:
+                  type: string
+                  minLength: 64
+                  maxLength: 64
+                password:
+                  type: string
+                  format: password
+                  minLength: 12
+                  maxLength: 1024
+      responses:
+        "200":
+          $ref: '#/components/responses/Ok'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+
   /api/usuarios:
     post:
       tags: [Usuarios]
       operationId: createUser
       summary: Crear un nuevo usuario (Valida unicidad, ID numérico y contraseña segura)
-      description: Si el ID pertenece a una cuenta eliminada o quedó en su historial, devuelve HTTP 200 con `success: false`.
+      description: Si omites el ID, la API asigna uno automáticamente. Si el ID enviado pertenece a una cuenta eliminada o quedó en su historial, devuelve HTTP 200 con `success: false`.
       requestBody:
         required: true
         content:
@@ -1179,11 +1243,11 @@ components:
 
     UsuarioInput:
       type: object
-      required: [id, nombre, email, password]
+      required: [nombre, email, password]
       properties:
         id:
           type: string
-          description: ID numérico del usuario
+          description: ID numérico opcional. Si se omite, lo genera la API.
           example: '1001'
         nombre:
           type: string
