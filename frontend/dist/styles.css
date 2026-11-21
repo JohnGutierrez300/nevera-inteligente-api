@@ -374,31 +374,6 @@ button:active:not(:disabled) {
   background: #fae9e7;
 }
 
-.update-feedback {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  display: grid;
-  place-items: center;
-  padding: 1rem;
-  pointer-events: none;
-}
-
-#update-feedback {
-  margin: 0;
-  padding: .9rem 1.3rem;
-  border: 1px solid #5d9774;
-  border-radius: .9rem;
-  color: #fff;
-  background: #125b44;
-  box-shadow: 0 12px 28px #12332845;
-  text-align: center;
-  font-weight: 700;
-}
-
-#update-feedback:empty { opacity: 0; }
-#update-feedback:not(:empty) { animation: enter 220ms ease-out both; }
-
 dialog {
   width: min(32rem, calc(100% - 1.5rem));
   max-height: calc(100% - 1.5rem);
@@ -415,7 +390,7 @@ dialog::backdrop { background: #0d271f9e; backdrop-filter: blur(5px); }
 .form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
 .dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .55rem; }
 
-#delete-dialog {
+.confirmation-dialog {
   position: fixed;
   inset: 0;
   width: min(28rem, calc(100% - 2rem));
@@ -433,7 +408,30 @@ dialog::backdrop { background: #0d271f9e; backdrop-filter: blur(5px); }
   overflow-wrap: anywhere;
 }
 
-#delete-dialog .dialog-actions { justify-content: center; }
+.confirmation-dialog .dialog-actions { justify-content: center; }
+
+.update-check {
+  display: grid;
+  place-items: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  margin: 0 auto 1rem;
+  border: 1px solid #b3d7b9;
+  border-radius: 50%;
+  color: var(--green);
+  background: #e4f4e7;
+}
+
+.update-check::before {
+  width: 1.2rem;
+  height: .62rem;
+  border: solid currentColor;
+  border-width: 0 0 3px 3px;
+  transform: rotate(-45deg) translateY(-2px);
+  content: "";
+}
+
+#update-title { margin-bottom: 1.1rem; }
 
 .delete-confirm {
   border-color: #a52f34;

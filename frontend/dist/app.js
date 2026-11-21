@@ -13,6 +13,7 @@ const filters = byId('filters');
 const results = byId('results');
 const dialog = byId('lot-dialog');
 const deleteDialog = byId('delete-dialog');
+const updateDialog = byId('update-dialog');
 const lotForm = byId('lot-form');
 const navButtons = [...document.querySelectorAll('[data-view]')];
 const views = {
@@ -63,15 +64,15 @@ function notice(message = '', error = false) {
   element.hidden = !message;
 }
 
-function clearUpdateFeedback() {
+function closeUpdateFeedback() {
   clearTimeout(updateFeedbackTimer);
-  byId('update-feedback').textContent = '';
+  if (updateDialog.open) updateDialog.close();
 }
 
 function showUpdateFeedback() {
-  clearUpdateFeedback();
-  byId('update-feedback').textContent = 'Actualizado correctamente';
-  updateFeedbackTimer = setTimeout(clearUpdateFeedback, 3000);
+  clearTimeout(updateFeedbackTimer);
+  updateDialog.showModal();
+  updateFeedbackTimer = setTimeout(closeUpdateFeedback, 3000);
 }
 
 function toggleRegistration() {
@@ -101,7 +102,7 @@ function signOut() {
   if (dialog.open) dialog.close();
   if (deleteDialog.open) deleteDialog.close();
   pendingDeletion = null;
-  clearUpdateFeedback();
+  closeUpdateFeedback();
   showSession(false);
   notice();
 }

@@ -84,7 +84,7 @@
       <div class="dialog-actions"><button class="secondary" id="cancel" type="button">Cancelar</button><button class="primary" id="save-lot">Guardar</button></div>
     </form>
   </dialog>
-  <dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-description">
+  <dialog id="delete-dialog" class="confirmation-dialog" aria-labelledby="delete-title" aria-describedby="delete-description">
     <form method="dialog">
       <h2 id="delete-title">¿Estás seguro de eliminar este lote?</h2>
       <p id="delete-description">Se eliminará el lote de <strong id="delete-product"></strong>. Esta acción no se puede deshacer.</p>
@@ -94,8 +94,14 @@
       </div>
     </form>
   </dialog>
-  <div class="update-feedback">
-    <p id="update-feedback" role="status" aria-atomic="true"></p>
-  </div>
+  <dialog id="update-dialog" class="confirmation-dialog" aria-labelledby="update-title">
+    <form method="dialog">
+      <span class="update-check" aria-hidden="true"></span>
+      <h2 id="update-title">Actualizado correctamente</h2>
+      <div class="dialog-actions">
+        <button class="primary" type="submit" autofocus>Aceptar</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>
