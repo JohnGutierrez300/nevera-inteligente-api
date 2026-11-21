@@ -9,7 +9,7 @@ info:
     - **Restricción al eliminar (409):** un recurso no puede eliminarse mientras otros registros lo referencien. La API responde `409` con el mensaje *"No se puede eliminar el registro porque está siendo utilizado en otros registros del sistema"* e indica en `data.dependencias` qué colecciones lo usan.
     - El historial de inventario es una bitácora y no bloquea eliminaciones.
     - **Validación en vivo:** al pulsar *Try it out*, los campos de ID (ruta, query y campos foráneos del body) se validan mientras se escriben o al salir del campo, sin presionar *Execute* (✅ / ❌ bajo el campo).
-    **Autenticación:** usa `POST /api/usuarios/login` y pega `data.token` en **Authorize**. La aplicación web usa una cookie de sesión del mismo origen. Las rutas privadas solo muestran los datos de la sesión. La lectura de catálogos es pública y las escrituras requieren un administrador configurado en `CATALOG_ADMIN_IDS`.
+    **Autenticación:** usa `POST /api/usuarios/login` y pega `data.token` en **Authorize**. La aplicación web usa una cookie del mismo origen que se renueva con el uso y vence tras 30 días de inactividad. Las rutas privadas solo muestran los datos de la sesión. La lectura de catálogos es pública y las escrituras requieren un administrador configurado en `CATALOG_ADMIN_IDS`.
 
     **Inventario:** se acumulan los lotes del mismo producto si coinciden el usuario, la nevera, la unidad, el estado, el vencimiento y el ingrediente opcional. Si omites la nevera al crear, se usa NEVERA-01. Las alertas se revisan al iniciar el servidor y cada hora mientras está activo, para lotes en nevera que vencen en las próximas 72 horas.
   version: '1.3.0'
@@ -55,7 +55,7 @@ paths:
                 sesion_web:
                   type: boolean
                   default: false
-                  description: Si es true, establece una cookie HttpOnly del mismo origen y devuelve el perfil. Swagger usa el Bearer por defecto.
+                  description: Si es true, devuelve el perfil y establece una cookie HttpOnly del mismo origen, renovable y con 30 días de inactividad. Swagger usa el Bearer de 24 horas por defecto.
       responses:
         "200":
           description: Sesión iniciada

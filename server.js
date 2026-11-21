@@ -168,6 +168,7 @@ const Sesion = mongoose.model('Sesion', new mongoose.Schema({
   _id: String,
   usuario: { type: String, required: true },
   credencial: { type: String, required: true },
+  web: Boolean,
   vence: { type: Date, required: true, expires: 0 }
 }, { collection: 'sesiones', versionKey: false }));
 
@@ -253,6 +254,7 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
 }, { collection: 'notificaciones', versionKey: false }));
 
 const DURACION_SESION_MS = 24 * 60 * 60 * 1000;
+const DURACION_SESION_WEB_MS = 30 * DURACION_SESION_MS;
 const CLAVE_SEGURA = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,1024}$/;
 const NOMBRE_COOKIE = 'nevera_session';
 const ADMINISTRADORES_CATALOGO = new Set(
@@ -262,6 +264,10 @@ const ADMINISTRADORES_CATALOGO = new Set(
 function opcionesCookieSesion(req) {
   const local = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(req.hostname);
   return { httpOnly: true, secure: !local, sameSite: 'strict', path: '/api' };
+}
+
+function escribirCookieSesion(req, res, token, vence) {
+  res.cookie(NOMBRE_COOKIE, token, { ...opcionesCookieSesion(req), expires: vence });
 }
 
 function exigirOrigenWeb(req) {
@@ -281,12 +287,35 @@ function tokenCookie(req) {
   return null;
 }
 
+async function renovarSesionWeb(req, res, token, sesion, ahora) {
+  if (req.method === 'POST' && /^\/usuarios\/logout\/?$/i.test(req.path)) return;
+
+  const restante = sesion.vence.getTime() - ahora.getTime();
+  const renovar = restante <= DURACION_SESION_WEB_MS - DURACION_SESION_MS;
+  if (!renovar && req.path !== '/usuarios/me') return;
+
+  let vence = sesion.vence;
+  if (renovar) {
+    const nuevaFecha = new Date(ahora.getTime() + DURACION_SESION_WEB_MS);
+    const renovada = await Sesion.findOneAndUpdate(
+      { _id: sesion._id, vence: { $gt: ahora } },
+      { $max: { vence: nuevaFecha } },
+      { returnDocument: 'after' }
+    ).select('vence').lean();
+    if (!renovada) return;
+    vence = renovada.vence;
+  }
+  escribirCookieSesion(req, res, token, vence);
+}
+
 async function autenticar(req, res, next) {
+  res.set('Cache-Control', 'no-store');
   const autorizacion = req.get('authorization');
   const token = autorizacion === undefined ? tokenCookie(req) : /^Bearer ([a-f0-9]{64})$/i.exec(autorizacion)?.[1];
   const sesionWeb = autorizacion === undefined && !!token;
   if (sesionWeb && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) exigirOrigenWeb(req);
-  const sesion = token && await Sesion.findOne({ _id: huella(token), vence: { $gt: new Date() } }).lean();
+  const ahora = new Date();
+  const sesion = token && await Sesion.findOne({ _id: huella(token), vence: { $gt: ahora } }).lean();
   const usuario = sesion && await Usuario.findById(sesion.usuario).select('+password_hash').lean();
   if (typeof usuario?.password_hash !== 'string' || huella(usuario.password_hash) !== sesion.credencial) {
     if (sesionWeb) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
@@ -297,7 +326,7 @@ async function autenticar(req, res, next) {
   req.usuario = usuario;
   req.sesionWeb = sesionWeb;
   req.sesionId = sesion._id;
-  res.set('Cache-Control', 'no-store');
+  if (sesionWeb && sesion.web === true) await renovarSesionWeb(req, res, token, sesion, ahora);
   next();
 }
 
@@ -440,11 +469,13 @@ app.post('/api/usuarios/login', async (req, res) => {
   }
 
   const token = randomBytes(32).toString('hex');
-  const vence = new Date(Date.now() + DURACION_SESION_MS);
-  await Sesion.create({ _id: huella(token), usuario: usuario._id, credencial: huella(usuario.password_hash), vence });
+  const web = sesion_web === true;
+  const duracion = web ? DURACION_SESION_WEB_MS : DURACION_SESION_MS;
+  const vence = new Date(Date.now() + duracion);
+  await Sesion.create({ _id: huella(token), usuario: usuario._id, credencial: huella(usuario.password_hash), vence, web });
   res.set('Cache-Control', 'no-store');
-  if (sesion_web === true) {
-    res.cookie(NOMBRE_COOKIE, token, { ...opcionesCookieSesion(req), maxAge: DURACION_SESION_MS });
+  if (web) {
+    escribirCookieSesion(req, res, token, vence);
     return res.status(200).json(responseFormat(true, 'Sesión iniciada', { perfil: perfilWeb(usuario), vence }));
   }
   res.status(200).json(responseFormat(true, 'Sesión iniciada', { token, vence }));

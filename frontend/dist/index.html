@@ -25,7 +25,11 @@
   </aside>
   <main>
     <p id="notice" role="status" aria-live="polite" hidden></p>
-    <section id="login" class="welcome">
+    <section id="session-check" class="session-check" aria-label="Estado de la sesión">
+      <p id="session-status" role="status">Comprobando tu sesión…</p>
+      <button id="retry-session" class="secondary" type="button" hidden>Reintentar</button>
+    </section>
+    <section id="login" class="welcome" hidden>
       <div>
         <h1>Tu nevera,<br><em>al día.</em></h1>
         <p>Consulta lo que tienes, revisa los vencimientos y organiza tus comidas.</p>

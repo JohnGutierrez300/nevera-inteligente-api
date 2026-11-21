@@ -96,6 +96,7 @@ function toggleRegistration() {
 }
 
 function showSession(active) {
+  byId('session-check').hidden = true;
   byId('login').hidden = active;
   for (const id of ['dashboard', 'navigation', 'logout']) byId(id).hidden = !active;
 }
@@ -130,11 +131,11 @@ async function signOut() {
   }
 }
 
-function startSession(profile) {
+function startSession(profile, view = 'home') {
   if (!profile?._id) throw new Error('No se pudo obtener el perfil de la sesión.');
   user = profile;
   showSession(true);
-  return selectView('home');
+  return selectView(view);
 }
 
 auth.addEventListener('submit', async event => {
@@ -219,6 +220,7 @@ submitRecovery(resetForm, async () => {
 const incomingToken = new URLSearchParams(location.hash.slice(1)).get('restablecer');
 if (incomingToken !== null) {
   history.replaceState(null, '', location.pathname + location.search);
+  showSession(false);
   if (/^[a-f0-9]{64}$/.test(incomingToken)) {
     recoveryToken = incomingToken;
     showAuthForm(resetForm);
@@ -330,6 +332,10 @@ async function loadView() {
 
 function selectView(view) {
   currentView = view;
+  const url = new URL(location.href);
+  if (view === 'home') url.searchParams.delete('vista');
+  else url.searchParams.set('vista', view);
+  if (url.href !== location.href) history.replaceState(history.state, '', url);
   byId('view-title').textContent = views[view];
   byId('add').hidden = filters.hidden = view !== 'inventory';
   for (const button of navButtons) {
@@ -577,15 +583,21 @@ const dashboard = createDashboard({
 });
 
 async function restoreSession() {
-  const submit = byId('auth-submit');
-  submit.disabled = true;
+  const retry = byId('retry-session');
+  const status = byId('session-status');
+  retry.hidden = true;
+  status.textContent = 'Comprobando tu sesión…';
   try {
     const response = await request('/usuarios/me');
-    await startSession(response.data);
+    const view = new URLSearchParams(location.search).get('vista');
+    await startSession(response.data, Object.hasOwn(views, view) ? view : 'home');
   } catch (error) {
-    if (error.status !== 401) notice(error.message, true);
-  } finally {
-    submit.disabled = false;
+    if (error.status === 401) {
+      showSession(false);
+    } else {
+      status.textContent = 'No se pudo comprobar tu sesión. Inténtalo de nuevo.';
+      retry.hidden = false;
+    }
   }
 }
 
@@ -602,4 +614,5 @@ async function refreshUnread() {
 
 window.addEventListener('focus', refreshUnread);
 setInterval(refreshUnread, 60 * 1000);
+byId('retry-session').addEventListener('click', restoreSession);
 if (incomingToken === null) void restoreSession();
