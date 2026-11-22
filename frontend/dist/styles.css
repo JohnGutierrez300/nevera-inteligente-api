@@ -269,6 +269,60 @@ label {
 .password-field input { padding-inline-end: 3.25rem; }
 .password-field input::-ms-reveal { display: none; }
 
+.password-requirements {
+  margin-bottom: 1rem;
+  padding: .7rem .85rem;
+  border: 1px solid var(--line);
+  border-radius: .75rem;
+  background: #f4f8f5;
+  font-size: .875rem;
+}
+
+.password-requirements p { margin: 0 0 .4rem; font-weight: 680; }
+
+.password-requirements ul {
+  display: grid;
+  gap: .35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.password-requirements li {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+
+.password-requirement-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 1.2rem;
+  height: 1.2rem;
+  border-radius: 50%;
+  color: #a32730;
+  background: #fae6e8;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.password-requirements .is-met .password-requirement-icon {
+  color: #13643d;
+  background: #ddf2e4;
+}
+
+#auth-submit[data-password-incomplete]:disabled { cursor: not-allowed; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .password-field > .password-toggle {
   position: absolute;
   inset-inline-end: .125rem;

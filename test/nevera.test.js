@@ -343,6 +343,51 @@ async function entrar(pagina, id, direccion = baseUrl + '/app/') {
   await pagina.locator('#dashboard').waitFor();
 }
 
+test('El registro muestra y valida cada requisito de contraseña mientras se escribe', { timeout: 35_000 }, async t => {
+  const navegador = await abrirNavegador(t);
+  const pagina = await navegador.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  pagina.setDefaultTimeout(8000);
+  await pagina.goto(baseUrl + '/app/');
+  const reglas = pagina.locator('#registration-password-rules');
+  const claveRegistro = pagina.locator('#auth input[name=password]');
+  const boton = pagina.locator('#auth-submit');
+  const icono = regla => reglas.locator('[data-password-rule="' + regla + '"] .password-requirement-icon').textContent();
+  await pagina.locator('#auth').waitFor();
+  assert.ok(await reglas.isHidden());
+  assert.ok(await boton.isEnabled());
+  await pagina.getByRole('button', { name: 'Crear una cuenta', exact: true }).click();
+  await reglas.waitFor();
+  assert.ok(await boton.isDisabled());
+  assert.equal(await icono('lowercase'), '×');
+
+  await claveRegistro.pressSequentially('abcdefghi');
+  assert.equal(await icono('lowercase'), '✓');
+  assert.equal(await icono('length'), '×');
+  await claveRegistro.pressSequentially('A1');
+  assert.equal(await icono('uppercase'), '✓');
+  assert.equal(await icono('number'), '✓');
+  assert.equal(await icono('symbol'), '×');
+  assert.ok(await boton.isDisabled());
+  await claveRegistro.pressSequentially('!');
+  assert.equal(await reglas.locator('.is-met').count(), 5);
+  assert.equal(await icono('length'), '✓');
+  assert.equal(await icono('symbol'), '✓');
+  assert.ok(await boton.isEnabled());
+
+  await claveRegistro.fill('A1!' + 'a'.repeat(1022));
+  assert.equal(await icono('length'), '×');
+  assert.ok(await boton.isDisabled());
+  const password = 'abcdefghiA1!';
+  const nombre = 'registro-requisitos';
+  await claveRegistro.fill(password);
+  await pagina.locator('#auth input[name=nombre]').fill(nombre);
+  await pagina.locator('#auth input[name=email]').fill('registro-requisitos@example.test');
+  await boton.click();
+  await pagina.getByText('Cuenta creada. Ya puedes iniciar sesión.', { exact: true }).waitFor();
+  assert.ok(await reglas.isHidden());
+  await correcto('/usuarios/login', { method: 'POST', body: { nombre, password } });
+});
+
 test('El frontend pagina, muestra el lote en conflicto y conserva sesión y vista al recargar', { timeout: 60_000 }, async t => {
   for (let dia = 1; dia <= 21; dia++) {
     await agregar({ nevera_id: 'PAGINAS-WEB', fecha_vencimiento: `2032-09-${String(dia).padStart(2, '0')}T12:00:00-05:00` }, admin);

@@ -49,9 +49,39 @@
         <label>Usuario<input name="nombre" autocomplete="username" required></label>
         <div id="registration" hidden>
           <label>Correo<input name="email" type="email" autocomplete="email" disabled required></label>
-          <p>Usa al menos 12 caracteres, con mayúsculas, minúsculas, números y símbolos.</p>
         </div>
         <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
+        <div class="password-requirements" id="registration-password-rules" hidden>
+          <p id="registration-password-title">Requisitos de la contraseña</p>
+          <ul role="list" aria-labelledby="registration-password-title">
+            <li data-password-rule="length">
+              <span class="password-requirement-icon" aria-hidden="true">×</span>
+              Entre 12 y 1024 caracteres
+              <span class="visually-hidden" data-rule-status>Pendiente</span>
+            </li>
+            <li data-password-rule="uppercase">
+              <span class="password-requirement-icon" aria-hidden="true">×</span>
+              Una letra mayúscula
+              <span class="visually-hidden" data-rule-status>Pendiente</span>
+            </li>
+            <li data-password-rule="lowercase">
+              <span class="password-requirement-icon" aria-hidden="true">×</span>
+              Una letra minúscula
+              <span class="visually-hidden" data-rule-status>Pendiente</span>
+            </li>
+            <li data-password-rule="number">
+              <span class="password-requirement-icon" aria-hidden="true">×</span>
+              Un número
+              <span class="visually-hidden" data-rule-status>Pendiente</span>
+            </li>
+            <li data-password-rule="symbol">
+              <span class="password-requirement-icon" aria-hidden="true">×</span>
+              Un símbolo
+              <span class="visually-hidden" data-rule-status>Pendiente</span>
+            </li>
+          </ul>
+          <p class="visually-hidden" id="registration-password-status" role="status"></p>
+        </div>
         <button class="primary" id="auth-submit">Entrar</button>
         <button class="text-button" id="forgot-toggle" type="button">¿Olvidaste tu contraseña?</button>
         <button class="text-button" id="register-toggle" type="button">Crear una cuenta</button>
