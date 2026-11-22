@@ -41,6 +41,13 @@ async function esperar(comprobar, mensaje) {
   assert.fail(mensaje + '\n' + salida);
 }
 
+async function detenerProceso(proceso) {
+  if (!proceso || proceso.exitCode !== null || proceso.signalCode !== null) return;
+  const cierre = once(proceso, 'exit');
+  proceso.kill();
+  await cierre;
+}
+
 async function api(ruta, { method = 'GET', body, token, cookie } = {}) {
   const headers = new Headers({ Origin: baseUrl });
   if (body !== undefined) headers.set('Content-Type', 'application/json');
@@ -114,11 +121,7 @@ before(async () => {
 }, { timeout: 180_000 });
 
 after(async () => {
-  if (servidor && servidor.exitCode === null && servidor.signalCode === null) {
-    const cierre = once(servidor, 'exit');
-    servidor.kill();
-    await cierre;
-  }
+  await detenerProceso(servidor);
   await replica?.stop();
 });
 
@@ -305,9 +308,9 @@ async function abrirNavegador(t) {
   return navegador;
 }
 
-async function entrar(pagina, id) {
+async function entrar(pagina, id, direccion = baseUrl + '/app/') {
   pagina.setDefaultTimeout(8000);
-  await pagina.goto(baseUrl + '/app/');
+  await pagina.goto(direccion);
   const formulario = pagina.locator('#auth');
   await formulario.locator('input[name=nombre]').fill(datosCuenta(id).nombre);
   await formulario.locator('input[name=password]').fill(clave);
@@ -417,6 +420,60 @@ test('Mi cuenta muestra el bloqueo por dependencias y cierra sesión cuando se p
   await pagina.getByText('Usuario eliminado exitosamente', { exact: true }).waitFor();
   await pagina.reload();
   await pagina.locator('#login').waitFor();
+});
+
+test('El servidor local carga el frontend MVC y permite usar planes, avisos, catálogo e historial', { timeout: 45_000 }, async t => {
+  await agregar({ nevera_id: 'FRONTEND-MVC', ingrediente_nombre: 'Leche' }, admin);
+  const aviso = await correcto('/notificaciones', {
+    ...admin, method: 'POST', body: { mensaje: 'Queda leche para el desayuno', tipo: 'STOCK_BAJO' }
+  });
+  const frontend = spawn(process.execPath, ['frontend/servir.js'], {
+    cwd: raiz,
+    env: { ...process.env, FRONTEND_PORT: '0', API_PORT: new URL(baseUrl).port },
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  t.after(() => detenerProceso(frontend));
+  let salidaFrontend = '';
+  frontend.stdout.on('data', chunk => { salidaFrontend += chunk; });
+  const inicio = await esperar(() => /disponible en (http:\/\/127\.0\.0\.1:\d+)/.exec(salidaFrontend), 'El frontend local no inició.');
+
+  const navegador = await abrirNavegador(t);
+  const pagina = await navegador.newPage({ viewport: { width: 1200, height: 800 } });
+  await entrar(pagina, idAdmin, inicio[1]);
+  const irA = vista => pagina.locator('#navigation [data-view="' + vista + '"]').click();
+  const editor = pagina.locator('#editor-form');
+  await irA('plans');
+  await pagina.getByRole('button', { name: 'Nuevo plan', exact: true }).click();
+  await editor.getByLabel('Nombre del plan').fill('Desayuno de prueba');
+  await editor.locator('select[name=ingrediente_nombre]').selectOption('Leche');
+  await editor.getByLabel('Frecuencia de compra en días').fill('7');
+  await editor.getByLabel('Probabilidad de desperdicio (%)').fill('25');
+  await editor.getByRole('button', { name: 'Guardar', exact: true }).click();
+  const plan = pagina.locator('.feature-row').filter({ hasText: 'Desayuno de prueba' }).first();
+  await plan.getByRole('button', { name: 'Ver plan', exact: true }).click();
+  await pagina.locator('#detail-dialog').getByText(/Compra cada 7 días/).waitFor();
+  await pagina.locator('#detail-dialog').getByRole('button', { name: 'Cerrar' }).click();
+
+  await irA('alerts');
+  const filaAviso = pagina.locator('.feature-row').filter({ hasText: aviso.mensaje });
+  await filaAviso.getByRole('button', { name: 'Marcar como leída' }).click();
+  await filaAviso.getByRole('button', { name: 'Marcar sin leer' }).waitFor();
+  assert.equal((await correcto('/notificaciones/' + aviso._id, admin)).leida, true);
+
+  await irA('catalog');
+  await pagina.getByRole('button', { name: 'Agregar producto', exact: true }).click();
+  await editor.getByLabel('Nombre', { exact: true }).fill('Queso de prueba');
+  await editor.locator('select[name=marca_nombre]').selectOption('Marca de prueba');
+  await editor.locator('select[name=categoria_nombre]').selectOption('Lácteos');
+  await editor.getByRole('button', { name: 'Guardar', exact: true }).click();
+  await pagina.getByRole('heading', { name: 'Queso de prueba', exact: true }).waitFor();
+
+  await irA('history');
+  await pagina.getByRole('button', { name: 'Ver detalle', exact: true }).first().click();
+  await pagina.locator('#detail-dialog').getByText('Cantidad registrada', { exact: true }).waitFor();
+  const inexistente = await fetch(inicio[1] + '/vistas/no-existe.js');
+  assert.equal(inexistente.status, 404);
 });
 
 test('La ruta de salud detecta cuando MongoDB deja de responder', { timeout: 35_000 }, async () => {
