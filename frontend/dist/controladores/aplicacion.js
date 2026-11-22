@@ -92,18 +92,20 @@ export function startApp() {
   }
 
   async function submitAuth(credentials, registering) {
+    const generation = viewRequest;
     notice();
     try {
       if (registering) {
         await model.account.register(credentials);
+        if (generation !== viewRequest) return;
         session.setRegistration(false);
         notice('Cuenta creada. Ya puedes iniciar sesión.');
         return;
       }
       const response = await model.account.signIn(credentials);
-      await startSession(response.data?.perfil);
+      if (generation === viewRequest) await startSession(response.data?.perfil);
     } catch (error) {
-      notice(error);
+      if (generation === viewRequest) notice(error);
     }
   }
 
@@ -120,36 +122,42 @@ export function startApp() {
   }
 
   async function recoverPassword({ email }) {
+    const generation = viewRequest;
     notice();
     try {
       const response = await model.account.recover(email);
-      notice(response.message);
+      if (generation === viewRequest) notice(response.message);
     } catch (error) {
-      notice(error);
+      if (generation === viewRequest) notice(error);
     }
   }
 
   async function resetPassword({ password, confirmation }) {
+    const generation = viewRequest;
     notice();
     try {
       if (password !== confirmation) throw new Error('Las contraseñas deben coincidir.');
       const response = await model.account.reset(recoveryToken, password);
+      if (generation !== viewRequest) return;
       recoveryToken = '';
       session.resetPasswordForm();
       session.select('login');
       notice(response.message);
     } catch (error) {
-      notice(error);
+      if (generation === viewRequest) notice(error);
     }
   }
 
   async function restoreSession() {
+    const generation = viewRequest;
     session.showChecking();
     try {
       const profile = await model.account.get();
+      if (generation !== viewRequest) return;
       const view = new URLSearchParams(location.search).get('vista');
       await startSession(profile, Object.hasOwn(viewTitles, view) ? view : 'home');
     } catch (error) {
+      if (generation !== viewRequest) return;
       if (error.status === 401) showSession(false);
       else session.showChecking(true);
     }
@@ -315,20 +323,24 @@ export function startApp() {
     }
   }
 
+  function openRecoveryLink() {
+    const incomingToken = new URLSearchParams(location.hash.slice(1)).get('restablecer');
+    if (incomingToken === null) return false;
+    history.replaceState(null, '', location.pathname + location.search);
+    endSession();
+    recoveryToken = '';
+    if (/^[a-f0-9]{64}$/.test(incomingToken)) {
+      recoveryToken = incomingToken;
+      session.select('reset');
+    } else {
+      session.select('forgot');
+      notice('El enlace no es válido. Solicita uno nuevo.', true);
+    }
+    return true;
+  }
+
   window.addEventListener('focus', refreshUnread);
+  window.addEventListener('hashchange', openRecoveryLink);
   setInterval(refreshUnread, 60 * 1000);
-  const incomingToken = new URLSearchParams(location.hash.slice(1)).get('restablecer');
-  if (incomingToken === null) {
-    void restoreSession();
-    return;
-  }
-  history.replaceState(null, '', location.pathname + location.search);
-  showSession(false);
-  if (/^[a-f0-9]{64}$/.test(incomingToken)) {
-    recoveryToken = incomingToken;
-    session.select('reset');
-  } else {
-    session.select('forgot');
-    notice('El enlace no es válido. Solicita uno nuevo.', true);
-  }
+  if (!openRecoveryLink()) void restoreSession();
 }

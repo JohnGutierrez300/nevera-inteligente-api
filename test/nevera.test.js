@@ -7,6 +7,7 @@ const { setTimeout: pause } = require('node:timers/promises');
 const { MongoMemoryReplSet } = require('mongodb-memory-server-core');
 const { mongo: { MongoClient } } = require('mongoose');
 const { chromium } = require('playwright');
+const { configurarCorreo } = require('../correo-recuperacion');
 
 const raiz = path.resolve(__dirname, '..');
 const clave = 'PruebaNevera2026!';
@@ -30,6 +31,26 @@ let baseUrl;
 let salida = '';
 let admin;
 let usuario;
+const correosEnviados = [];
+
+function simularGmail() {
+  const solicitar = globalThis.fetch;
+  globalThis.fetch = async (url, opciones) => {
+    if (url === 'https://oauth2.googleapis.com/token') {
+      const parametros = new URLSearchParams(opciones.body);
+      if (parametros.get('grant_type') !== 'refresh_token' || parametros.get('refresh_token') !== 'actualizacion-de-prueba') {
+        return Response.json({ error: 'invalid_grant' }, { status: 400 });
+      }
+      return Response.json({ access_token: 'acceso-de-prueba' });
+    }
+    if (url === 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send') {
+      if (opciones.headers.Authorization !== 'Bearer acceso-de-prueba') return new Response(null, { status: 401 });
+      process.send({ raw: JSON.parse(opciones.body).raw });
+      return Response.json({ id: 'mensaje-de-prueba' });
+    }
+    return solicitar(url, opciones);
+  };
+}
 
 async function esperar(comprobar, mensaje) {
   const limite = Date.now() + 15_000;
@@ -94,15 +115,19 @@ const agregar = (body, auth = usuario) => correcto('/inventario', {
 before(async () => {
   replica = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   mongoUri = replica.getUri('nevera_test');
-  servidor = spawn(process.execPath, ['server.js'], {
+  const gmail = 'data:text/javascript,' + encodeURIComponent('(' + simularGmail.toString() + ')()');
+  servidor = spawn(process.execPath, ['--import', gmail, 'server.js'], {
     cwd: raiz,
     env: {
       ...process.env, PORT: '0', MONGO_URI: mongoUri, CATALOG_ADMIN_IDS: idAdmin,
-      GMAIL_USER: '', GMAIL_APP_PASSWORD: '', DOTENV_CONFIG_QUIET: 'true'
+      GMAIL_USER: 'nevera@example.test', GMAIL_APP_PASSWORD: '', GMAIL_CLIENT_ID: 'cliente-de-prueba',
+      GMAIL_CLIENT_SECRET: 'secreto-de-prueba', GMAIL_REFRESH_TOKEN: 'actualizacion-de-prueba',
+      PASSWORD_RESET_URL: '', RENDER_EXTERNAL_URL: 'https://nevera-prueba.example', DOTENV_CONFIG_QUIET: 'true'
     },
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc']
   });
+  servidor.on('message', mensaje => correosEnviados.push(mensaje.raw));
   for (const stream of [servidor.stdout, servidor.stderr]) {
     stream.on('data', chunk => { salida += chunk; });
   }
@@ -474,6 +499,62 @@ test('El servidor local carga el frontend MVC y permite usar planes, avisos, cat
   await pagina.locator('#detail-dialog').getByText('Cantidad registrada', { exact: true }).waitFor();
   const inexistente = await fetch(inicio[1] + '/vistas/no-existe.js');
   assert.equal(inexistente.status, 404);
+});
+
+test('Recuperación admite Gmail local y genera enlaces públicos en Render', () => {
+  const local = {
+    GMAIL_USER: 'nevera@example.test', GMAIL_APP_PASSWORD: ' clave de prueba ',
+    PASSWORD_RESET_URL: 'http://127.0.0.1:4173/'
+  };
+  assert.equal(configurarCorreo(local).enlace.href, local.PASSWORD_RESET_URL);
+  assert.equal(configurarCorreo(local).clave, 'clavedeprueba');
+  const render = { ...local, RENDER_EXTERNAL_URL: 'https://nevera-prueba.example' };
+  assert.equal(configurarCorreo(render), null);
+  delete render.PASSWORD_RESET_URL;
+  assert.equal(configurarCorreo(render).enlace.href, 'https://nevera-prueba.example/app/');
+  assert.equal(configurarCorreo({ ...render, GMAIL_CLIENT_ID: 'incompleto' }), null);
+  assert.equal(configurarCorreo({ ...render, RENDER_EXTERNAL_URL: 'mailto:nevera@example.test' }), null);
+});
+
+test('El enlace de recuperación enviado por Gmail permite cambiar la contraseña una sola vez', { timeout: 40_000 }, async t => {
+  const id = '7006';
+  const cuenta = datosCuenta(id);
+  const password = 'RecuperadaNevera2030!';
+  await correcto('/usuarios', { method: 'POST', body: cuenta });
+  const inicioAnterior = await sesion(id);
+  const navegador = await abrirNavegador(t);
+  const pagina = await navegador.newPage();
+  pagina.setDefaultTimeout(8000);
+  await pagina.goto(baseUrl + '/app/');
+  await pagina.locator('#forgot-toggle').click();
+  await pagina.locator('#forgot-form input[name=email]').fill(cuenta.email);
+  await pagina.getByRole('button', { name: 'Solicitar enlace', exact: true }).click();
+  const aviso = 'Si el correo está registrado, recibirás un enlace de recuperación.';
+  await pagina.getByText(aviso, { exact: true }).waitFor();
+  const desconocido = await api('/usuarios/recuperar-contrasena', {
+    method: 'POST', body: { email: 'no-registrado@example.test' }
+  });
+  assert.equal(desconocido.status, 202);
+  assert.equal(desconocido.message, aviso);
+
+  const raw = await esperar(() => correosEnviados.shift(), 'No se recibió el correo de recuperación de prueba.');
+  const mime = Buffer.from(raw, 'base64url').toString('utf8').replace(/=\r?\n/g, '').replace(/=3D/g, '=');
+  assert.ok(mime.includes(cuenta.email));
+  const coincidencia = /https:\/\/nevera-prueba\.example\/app\/#restablecer=([a-f0-9]{64})/.exec(mime);
+  assert.ok(coincidencia, 'El correo debe incluir un enlace de recuperación público.');
+  const [, token] = coincidencia;
+  await pagina.goto(baseUrl + '/app/#restablecer=' + token);
+  const formulario = pagina.locator('#reset-form');
+  await formulario.locator('input[name=password]').fill(password);
+  await formulario.locator('input[name=confirmation]').fill(password);
+  await formulario.getByRole('button', { name: 'Guardar contraseña', exact: true }).click();
+  await pagina.getByText('Contraseña actualizada. Ya puedes iniciar sesión.', { exact: true }).waitFor();
+  assert.equal(new URL(pagina.url()).hash, '');
+  assert.equal((await api('/usuarios/me', inicioAnterior)).status, 401);
+  const repetido = await api('/usuarios/restablecer-contrasena', { method: 'POST', body: { token, password } });
+  assert.equal(repetido.status, 400);
+  assert.equal((await api('/usuarios/login', { method: 'POST', body: { id, password: clave } })).status, 401);
+  await correcto('/usuarios/login', { method: 'POST', body: { id, password } });
 });
 
 test('La ruta de salud detecta cuando MongoDB deja de responder', { timeout: 35_000 }, async () => {

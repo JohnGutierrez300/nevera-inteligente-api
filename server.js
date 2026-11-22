@@ -1,13 +1,13 @@
 const path = require('path');
 const express = require('express');
 const mongoose = require('mongoose');
-const nodemailer = require('nodemailer');
 const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const YAML = require('yamljs');
 const { randomBytes, randomInt, randomUUID } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { huella, protegerClave, verificarClave } = require('./credenciales');
+const { configurarCorreo, enviarCorreoRecuperacion } = require('./correo-recuperacion');
 require('dotenv').config();
 
 const app = express();
@@ -500,19 +500,6 @@ const RECUPERACION_ESPERA_MS = 2 * 60 * 1000;
 const CAMPOS_ENLACE_RECUPERACION = { recuperacion_hash: 1, recuperacion_vence: 1 };
 const correoValido = email => typeof email === 'string' && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-function configurarRecuperacion() {
-  const { GMAIL_USER, GMAIL_APP_PASSWORD, PASSWORD_RESET_URL } = process.env;
-  const remitente = GMAIL_USER?.trim();
-  const clave = GMAIL_APP_PASSWORD?.replace(/\s/g, '');
-  const enlace = URL.canParse(PASSWORD_RESET_URL ?? '') ? new URL(PASSWORD_RESET_URL) : null;
-  const urlValida = enlace && (enlace.protocol === 'https:' ||
-    (enlace.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(enlace.hostname)));
-  if (!remitente || !clave || !urlValida || enlace.username || enlace.password) {
-    throw new ApiError(503, 'La recuperación por correo todavía no está disponible.');
-  }
-  return { clave, remitente, enlace };
-}
-
 async function enviarRecuperacion(email, configuracion) {
   const token = randomBytes(32).toString('hex');
   const hash = huella(token);
@@ -532,25 +519,7 @@ async function enviarRecuperacion(email, configuracion) {
 
   configuracion.enlace.hash = new URLSearchParams({ restablecer: token }).toString();
   try {
-    const transporte = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: configuracion.remitente, pass: configuracion.clave },
-      dnsTimeout: 8000,
-      connectionTimeout: 8000,
-      greetingTimeout: 8000,
-      socketTimeout: 15000
-    });
-    await transporte.sendMail({
-      from: { name: 'Nevera Inteligente', address: configuracion.remitente },
-      to: { address: usuario.email, name: '' },
-      subject: 'Restablece tu contraseña de Nevera Inteligente',
-      text: [
-        'Abre este enlace para elegir una contraseña nueva:',
-        configuracion.enlace.href,
-        'El enlace vence en 30 minutos y solo se puede usar una vez.',
-        'Si no solicitaste el cambio, puedes ignorar este correo.'
-      ].join('\n\n')
-    });
+    await enviarCorreoRecuperacion(configuracion, usuario.email, configuracion.enlace.href);
   } catch (error) {
     await Usuario.updateOne({ _id: usuario._id, recuperacion_hash: hash }, {
       $unset: CAMPOS_ENLACE_RECUPERACION
@@ -564,9 +533,11 @@ app.post('/api/usuarios/recuperar-contrasena', (req, res) => {
   if (!correoValido(email)) {
     throw new ApiError(400, 'Ingresa un correo electrónico válido.');
   }
-  const configuracion = configurarRecuperacion();
-  void enviarRecuperacion(email, configuracion).catch(() => {
-    console.error('No se pudo procesar un correo de recuperación.');
+  const configuracion = configurarCorreo();
+  if (!configuracion) throw new ApiError(503, 'La recuperación por correo todavía no está disponible.');
+  void enviarRecuperacion(email, configuracion).catch(error => {
+    const codigo = typeof error.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code) ? error.code : error.name;
+    console.error('No se pudo procesar un correo de recuperación.', codigo);
   });
   res.set('Cache-Control', 'no-store');
   res.status(202).json(responseFormat(true, 'Si el correo está registrado, recibirás un enlace de recuperación.'));
