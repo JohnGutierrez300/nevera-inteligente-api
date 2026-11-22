@@ -1,16 +1,82 @@
-import { passwordRequirements } from '../modelos/credenciales.js';
+import { passwordLengthLimit, passwordRequirements } from '../modelos/credenciales.js';
 import { bindPasswords, byId, field, formValues, maskPasswords, notice } from './componentes.js';
 
-function bindSubmit(form, buttons, send) {
+function bindSubmit(form, buttons, send, { validate, done } = {}) {
+  const submit = form.querySelector('button[type="submit"], button:not([type])');
+  let submitting = false;
+
+  function update() {
+    const valid = validate?.() ?? true;
+    submit.disabled = submitting || !valid;
+    submit.toggleAttribute('data-password-incomplete', !valid);
+    return valid;
+  }
+
   form.addEventListener('submit', async event => {
     event.preventDefault();
+    if (submitting || !update()) return;
+    submitting = true;
     for (const button of buttons) button.disabled = true;
     try {
       await send(formValues(form));
     } finally {
+      done?.();
+      submitting = false;
       for (const button of buttons) button.disabled = false;
+      update();
     }
   });
+  if (validate) form.addEventListener('reset', () => queueMicrotask(update));
+  update();
+  return update;
+}
+
+function createPasswordChecklist(container, password) {
+  container.append(byId('password-requirements-template').content.cloneNode(true));
+  const title = container.querySelector('[data-requirements-title]');
+  const status = container.querySelector('[role="status"]');
+  const lengthLabel = container.querySelector('[data-length-label]');
+  const minimumLabel = lengthLabel.textContent;
+  title.id = container.id + '-title';
+  status.id = container.id + '-status';
+  container.querySelector('ul').setAttribute('aria-labelledby', title.id);
+  const rules = [...container.querySelectorAll('[data-password-rule]')].map(node => ({
+    node,
+    key: node.dataset.passwordRule,
+    icon: node.querySelector('.password-requirement-icon'),
+    status: node.querySelector('[data-rule-status]')
+  }));
+
+  return {
+    show(active) {
+      container.hidden = !active;
+      if (active) {
+        password.setAttribute('aria-describedby', title.id + ' ' + status.id);
+      } else {
+        password.removeAttribute('aria-describedby');
+        password.removeAttribute('aria-invalid');
+      }
+    },
+    update() {
+      const value = password.value;
+      const checks = passwordRequirements(value);
+      const label = value.length > passwordLengthLimit ? 'La contraseña es demasiado larga' : minimumLabel;
+      if (lengthLabel.textContent !== label) lengthLabel.textContent = label;
+      let met = 0;
+      for (const rule of rules) {
+        const valid = checks[rule.key];
+        if (valid) met++;
+        rule.node.classList.toggle('is-met', valid);
+        rule.icon.textContent = valid ? '✓' : '×';
+        rule.status.textContent = valid ? 'Cumplido' : 'Pendiente';
+      }
+      const complete = met === rules.length;
+      const summary = `${met} de ${rules.length} requisitos cumplidos.`;
+      if (status.textContent !== summary) status.textContent = summary;
+      password.setAttribute('aria-invalid', String(Boolean(value) && !complete));
+      return complete;
+    }
+  };
 }
 
 export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry }) {
@@ -22,53 +88,25 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
   const toggle = byId('register-toggle');
   const forgotToggle = byId('forgot-toggle');
   const password = field(auth, 'password');
-  const requirements = byId('registration-password-rules');
-  const requirementStatus = byId('registration-password-status');
-  const rules = [...requirements.querySelectorAll('[data-password-rule]')];
+  const resetPassword = field(resetForm, 'password');
+  const registerChecklist = createPasswordChecklist(byId('registration-password-rules'), password);
+  const resetChecklist = createPasswordChecklist(byId('reset-password-rules'), resetPassword);
+  resetChecklist.show(true);
   const forms = { login: auth, forgot: forgotForm, reset: resetForm };
   let registering = false;
-  let submitting = false;
-
-  function updatePasswordRequirements() {
-    let pending = false;
-    if (registering) {
-      const checks = passwordRequirements(password.value);
-      let met = 0;
-      for (const rule of rules) {
-        const valid = checks[rule.dataset.passwordRule];
-        if (valid) met++;
-        rule.classList.toggle('is-met', valid);
-        rule.querySelector('.password-requirement-icon').textContent = valid ? '✓' : '×';
-        rule.querySelector('[data-rule-status]').textContent = valid ? 'Cumplido' : 'Pendiente';
-      }
-      pending = met !== rules.length;
-      const summary = `${met} de ${rules.length} requisitos cumplidos.`;
-      if (requirementStatus.textContent !== summary) requirementStatus.textContent = summary;
-      password.setAttribute('aria-invalid', String(Boolean(password.value) && pending));
-    }
-    submit.toggleAttribute('data-password-incomplete', pending);
-    submit.disabled = submitting || pending;
-    return !pending;
-  }
 
   function setRegistration(active) {
     maskPasswords(auth);
     registering = active;
     byId('registration').hidden = !active;
-    requirements.hidden = !active;
+    registerChecklist.show(active);
     field(auth, 'email').disabled = !active;
     password.autocomplete = active ? 'new-password' : 'current-password';
-    if (active) {
-      password.setAttribute('aria-describedby', 'registration-password-title registration-password-status');
-    } else {
-      password.removeAttribute('aria-describedby');
-      password.removeAttribute('aria-invalid');
-    }
     byId('auth-title').textContent = active ? 'Crear cuenta' : 'Iniciar sesión';
     submit.textContent = active ? 'Crear cuenta' : 'Entrar';
     toggle.textContent = active ? 'Volver al inicio de sesión' : 'Crear una cuenta';
     forgotToggle.hidden = active;
-    updatePasswordRequirements();
+    updateAuthSubmit();
     notice();
   }
 
@@ -84,23 +122,18 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
 
   bindPasswords(auth);
   bindPasswords(resetForm);
-  password.addEventListener('input', updatePasswordRequirements);
-  password.addEventListener('change', updatePasswordRequirements);
-  auth.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (submitting || !updatePasswordRequirements()) return;
-    submitting = toggle.disabled = forgotToggle.disabled = true;
-    updatePasswordRequirements();
-    try {
-      await onAuth(formValues(auth), registering);
-    } finally {
-      password.value = '';
-      submitting = toggle.disabled = forgotToggle.disabled = false;
-      updatePasswordRequirements();
-    }
+  const updateAuthSubmit = bindSubmit(auth, [submit, toggle, forgotToggle], fields => onAuth(fields, registering), {
+    validate: () => !registering || registerChecklist.update(),
+    done: () => { password.value = ''; }
   });
   bindSubmit(forgotForm, forgotForm.querySelectorAll('button'), onRecover);
-  bindSubmit(resetForm, resetForm.querySelectorAll('button'), onReset);
+  const updateResetSubmit = bindSubmit(resetForm, resetForm.querySelectorAll('button'), onReset, {
+    validate: resetChecklist.update
+  });
+  for (const event of ['input', 'change']) {
+    password.addEventListener(event, updateAuthSubmit);
+    resetPassword.addEventListener(event, updateResetSubmit);
+  }
   toggle.addEventListener('click', () => setRegistration(!registering));
   forgotToggle.addEventListener('click', () => {
     password.value = '';

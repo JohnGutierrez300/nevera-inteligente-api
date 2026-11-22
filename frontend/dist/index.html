@@ -51,37 +51,7 @@
           <label>Correo<input name="email" type="email" autocomplete="email" disabled required></label>
         </div>
         <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
-        <div class="password-requirements" id="registration-password-rules" hidden>
-          <p id="registration-password-title">Requisitos de la contraseña</p>
-          <ul role="list" aria-labelledby="registration-password-title">
-            <li data-password-rule="length">
-              <span class="password-requirement-icon" aria-hidden="true">×</span>
-              Entre 12 y 1024 caracteres
-              <span class="visually-hidden" data-rule-status>Pendiente</span>
-            </li>
-            <li data-password-rule="uppercase">
-              <span class="password-requirement-icon" aria-hidden="true">×</span>
-              Una letra mayúscula
-              <span class="visually-hidden" data-rule-status>Pendiente</span>
-            </li>
-            <li data-password-rule="lowercase">
-              <span class="password-requirement-icon" aria-hidden="true">×</span>
-              Una letra minúscula
-              <span class="visually-hidden" data-rule-status>Pendiente</span>
-            </li>
-            <li data-password-rule="number">
-              <span class="password-requirement-icon" aria-hidden="true">×</span>
-              Un número
-              <span class="visually-hidden" data-rule-status>Pendiente</span>
-            </li>
-            <li data-password-rule="symbol">
-              <span class="password-requirement-icon" aria-hidden="true">×</span>
-              Un símbolo
-              <span class="visually-hidden" data-rule-status>Pendiente</span>
-            </li>
-          </ul>
-          <p class="visually-hidden" id="registration-password-status" role="status"></p>
-        </div>
+        <div class="password-requirements" id="registration-password-rules" hidden></div>
         <button class="primary" id="auth-submit">Entrar</button>
         <button class="text-button" id="forgot-toggle" type="button">¿Olvidaste tu contraseña?</button>
         <button class="text-button" id="register-toggle" type="button">Crear una cuenta</button>
@@ -94,13 +64,44 @@
       </form>
       <form id="reset-form" class="panel" hidden>
         <h2>Elige una contraseña nueva</h2>
-        <p>Usa al menos 12 caracteres, con mayúsculas, minúsculas, números y símbolos.</p>
-        <label>Contraseña nueva<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required></label>
-        <label>Confirma la contraseña<input name="confirmation" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required></label>
+        <label>Contraseña nueva<input name="password" type="password" autocomplete="new-password" required></label>
+        <div class="password-requirements" id="reset-password-rules"></div>
+        <label>Confirma la contraseña<input name="confirmation" type="password" autocomplete="new-password" required></label>
         <button class="primary" type="submit">Guardar contraseña</button>
         <button class="text-button" type="button" data-auth-back>Volver al inicio de sesión</button>
       </form>
     </section>
+    <template id="password-requirements-template">
+      <p data-requirements-title>Requisitos de la contraseña</p>
+      <ul role="list">
+        <li data-password-rule="length">
+          <span class="password-requirement-icon" aria-hidden="true">×</span>
+          <span data-length-label>Al menos 12 caracteres</span>
+          <span class="visually-hidden" data-rule-status>Pendiente</span>
+        </li>
+        <li data-password-rule="uppercase">
+          <span class="password-requirement-icon" aria-hidden="true">×</span>
+          Una letra mayúscula
+          <span class="visually-hidden" data-rule-status>Pendiente</span>
+        </li>
+        <li data-password-rule="lowercase">
+          <span class="password-requirement-icon" aria-hidden="true">×</span>
+          Una letra minúscula
+          <span class="visually-hidden" data-rule-status>Pendiente</span>
+        </li>
+        <li data-password-rule="number">
+          <span class="password-requirement-icon" aria-hidden="true">×</span>
+          Un número
+          <span class="visually-hidden" data-rule-status>Pendiente</span>
+        </li>
+        <li data-password-rule="symbol">
+          <span class="password-requirement-icon" aria-hidden="true">×</span>
+          Un símbolo
+          <span class="visually-hidden" data-rule-status>Pendiente</span>
+        </li>
+      </ul>
+      <p class="visually-hidden" role="status"></p>
+    </template>
     <section id="dashboard" hidden>
       <header class="heading">
         <div><p class="eyebrow">Mi nevera</p><h1 id="view-title">Inventario</h1></div>

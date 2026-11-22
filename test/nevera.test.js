@@ -357,6 +357,7 @@ test('El registro muestra y valida cada requisito de contraseña mientras se esc
   assert.ok(await boton.isEnabled());
   await pagina.getByRole('button', { name: 'Crear una cuenta', exact: true }).click();
   await reglas.waitFor();
+  assert.equal(await reglas.locator('[data-length-label]').textContent(), 'Al menos 12 caracteres');
   assert.ok(await boton.isDisabled());
   assert.equal(await icono('lowercase'), '×');
 
@@ -376,6 +377,7 @@ test('El registro muestra y valida cada requisito de contraseña mientras se esc
 
   await claveRegistro.fill('A1!' + 'a'.repeat(1022));
   assert.equal(await icono('length'), '×');
+  assert.equal(await reglas.locator('[data-length-label]').textContent(), 'La contraseña es demasiado larga');
   assert.ok(await boton.isDisabled());
   const password = 'abcdefghiA1!';
   const nombre = 'registro-requisitos';
@@ -564,7 +566,7 @@ test('Recuperación admite Gmail local y genera enlaces públicos en Render', ()
 test('El enlace de recuperación enviado por Gmail permite cambiar la contraseña una sola vez', { timeout: 40_000 }, async t => {
   const id = '7006';
   const cuenta = datosCuenta(id);
-  const password = 'RecuperadaNevera2030!';
+  const password = 'abcdefghiA1!';
   await correcto('/usuarios', { method: 'POST', body: cuenta });
   const inicioAnterior = await sesion(id);
   const navegador = await abrirNavegador(t);
@@ -590,9 +592,22 @@ test('El enlace de recuperación enviado por Gmail permite cambiar la contraseñ
   const [, token] = coincidencia;
   await pagina.goto(baseUrl + '/app/#restablecer=' + token);
   const formulario = pagina.locator('#reset-form');
-  await formulario.locator('input[name=password]').fill(password);
+  const reglas = formulario.locator('#reset-password-rules');
+  const guardar = formulario.getByRole('button', { name: 'Guardar contraseña', exact: true });
+  const nuevaClave = formulario.locator('input[name=password]');
+  await reglas.waitFor();
+  assert.equal(await reglas.locator('[data-length-label]').textContent(), 'Al menos 12 caracteres');
+  assert.equal(await reglas.locator('.is-met').count(), 0);
+  assert.ok(await guardar.isDisabled());
+  await nuevaClave.pressSequentially(password.slice(0, -1));
+  assert.equal(await reglas.locator('[data-password-rule="symbol"] .password-requirement-icon').textContent(), '×');
+  assert.ok(await guardar.isDisabled());
+  await nuevaClave.pressSequentially('!');
+  assert.equal(await reglas.locator('.is-met').count(), 5);
+  assert.equal(await reglas.locator('[data-password-rule="symbol"] .password-requirement-icon').textContent(), '✓');
+  assert.ok(await guardar.isEnabled());
   await formulario.locator('input[name=confirmation]').fill(password);
-  await formulario.getByRole('button', { name: 'Guardar contraseña', exact: true }).click();
+  await guardar.click();
   await pagina.getByText('Contraseña actualizada. Ya puedes iniciar sesión.', { exact: true }).waitFor();
   assert.equal(new URL(pagina.url()).hash, '');
   assert.equal((await api('/usuarios/me', inicioAnterior)).status, 401);

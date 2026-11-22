@@ -311,7 +311,7 @@ label {
   background: #ddf2e4;
 }
 
-#auth-submit[data-password-incomplete]:disabled { cursor: not-allowed; }
+button[data-password-incomplete]:disabled { cursor: not-allowed; }
 
 .visually-hidden {
   position: absolute;
