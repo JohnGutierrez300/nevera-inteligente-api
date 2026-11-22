@@ -6,6 +6,7 @@ const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const YAML = require('yamljs');
 const { randomBytes, randomInt, randomUUID } = require('node:crypto');
+const { isDeepStrictEqual } = require('node:util');
 const { huella, protegerClave, verificarClave } = require('./credenciales');
 require('dotenv').config();
 
@@ -41,6 +42,19 @@ const responseFormat = (success, message, data = null) => ({
   success,
   message,
   data
+});
+
+app.get('/api/salud', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (mongoose.connection.readyState === 1) {
+    try {
+      await mongoose.connection.db.command({ ping: 1 }, { timeoutMS: 1500 });
+      return res.status(200).json(responseFormat(true, 'API y base de datos disponibles'));
+    } catch {
+      // Un ping fallido también indica que la aplicación no está lista.
+    }
+  }
+  res.status(503).json(responseFormat(false, 'Base de datos no disponible'));
 });
 
 // ==========================================
@@ -723,20 +737,20 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
 
     const datosActualizados = {};
     if (nombre !== undefined) datosActualizados.nombre = nombre.trim();
-    if (email !== undefined) datosActualizados.email = email.trim();
-    const cambiaCredenciales = (email !== undefined && datosActualizados.email !== req.usuario.email) || clave !== undefined;
-    if (req.sesionWeb && cambiaCredenciales) {
+    if (email !== undefined && email.trim() !== req.usuario.email) datosActualizados.email = email.trim();
+    const cambiaCredenciales = datosActualizados.email !== undefined || clave !== undefined;
+    if (cambiaCredenciales) {
       const actualValida = typeof password_actual === 'string' && password_actual.length <= 1024
         && (await verificarClave(password_actual, req.usuario.password_hash)).valida;
       if (!actualValida) throw new ApiError(403, 'Confirma tu contraseña actual para guardar este cambio.');
     }
 
-    if (nombre || email) {
+    if (datosActualizados.nombre !== undefined || datosActualizados.email !== undefined) {
       const conflicto = await Usuario.findOne({
         _id: { $ne: usuarioId },
         $or: [
-          ...(nombre ? [{ nombre: datosActualizados.nombre }] : []),
-          ...(email ? [{ email: datosActualizados.email }] : [])
+          ...(datosActualizados.nombre !== undefined ? [{ nombre: datosActualizados.nombre }] : []),
+          ...(datosActualizados.email !== undefined ? [{ email: datosActualizados.email }] : [])
         ]
       });
       if (conflicto) {
@@ -758,7 +772,7 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
     const cambios = { $set: datosActualizados };
     if (cambiaCredenciales) cambios.$unset = CAMPOS_ENLACE_RECUPERACION;
     const filtro = { _id: usuarioId };
-    if (req.sesionWeb && cambiaCredenciales) filtro.password_hash = req.usuario.password_hash;
+    if (cambiaCredenciales) filtro.password_hash = req.usuario.password_hash;
     const usuarioActualizado = await Usuario.findOneAndUpdate(filtro, cambios, { returnDocument: 'after', runValidators: true });
     if (!usuarioActualizado) throw new ApiError(401, 'La sesión cambió. Vuelve a iniciar sesión.');
     if (req.sesionWeb && clave !== undefined) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
@@ -925,15 +939,38 @@ mutacion('delete', '/api/productos/:id', async req => {
 });
 
 // 6. Inventario (Con acumulación inteligente si ya existe)
-function fechaInventario(valor) {
-  if (typeof valor !== 'string' || !valor.trim()) throw new ApiError(400, 'Envía una fecha válida');
-  const fecha = new Date(valor);
-  if (!Number.isFinite(fecha.getTime())) throw new ApiError(400, 'Envía una fecha válida');
-  return fecha;
+const FECHA_INVENTARIO = /^(\d{4}-(?:0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i;
+
+function fechaInventario(valor, campo) {
+  const partes = typeof valor === 'string' && FECHA_INVENTARIO.exec(valor);
+  if (partes) {
+    const [, diaCalendario, dia] = partes;
+    const fecha = new Date(valor);
+    if (new Date(`${diaCalendario}T00:00:00Z`).getUTCDate() === Number(dia) && Number.isFinite(fecha.getTime())) {
+      return fecha;
+    }
+  }
+  throw new ApiError(400, `Envía una fecha y hora válidas para ${campo}, con zona horaria.`);
 }
 
-function paginar(consulta, { pagina, limite }) {
-  if (pagina === undefined && limite === undefined) return consulta;
+function cuerpoInventario(cuerpo) {
+  if (!cuerpo || typeof cuerpo !== 'object' || Array.isArray(cuerpo)) {
+    throw new ApiError(400, 'Envía un cuerpo JSON con los datos del lote.');
+  }
+  return cuerpo;
+}
+
+function identidadLote(lote) {
+  const { user_nombre, nevera_id, producto_id, unidad_medida_nombre, estado } = lote;
+  return {
+    user_nombre, nevera_id, producto_id, unidad_medida_nombre, estado,
+    ingrediente_nombre: lote.ingrediente_nombre ?? null,
+    fecha_vencimiento: lote.fecha_vencimiento ?? null
+  };
+}
+
+function opcionesPaginacion({ pagina, limite }) {
+  if (pagina === undefined && limite === undefined) return null;
   const numero = Number(pagina ?? 1);
   const cantidad = Number(limite ?? 25);
   const salto = (numero - 1) * cantidad;
@@ -941,7 +978,7 @@ function paginar(consulta, { pagina, limite }) {
       cantidad < 1 || cantidad > 100 || !Number.isSafeInteger(salto)) {
     throw new ApiError(400, 'La página debe ser positiva y el límite debe estar entre 1 y 100');
   }
-  return consulta.skip(salto).limit(cantidad);
+  return { pagina: numero, limite: cantidad, salto };
 }
 
 function registrarHistorial(item, accion, detalles) {
@@ -952,24 +989,28 @@ function registrarHistorial(item, accion, detalles) {
 }
 
 mutacion('post', '/api/inventario', async req => {
+  const cuerpo = cuerpoInventario(req.body);
   const {
     user_nombre, nevera_id = NEVERA_PREDETERMINADA, producto_id, unidad_medida_nombre,
     cantidad, fecha_vencimiento, ingrediente_nombre, estado = 'EN_NEVERA'
-  } = req.body;
+  } = cuerpo;
   exigirPropietario(req.usuarioId, user_nombre);
+  const faltantes = ['producto_id', 'unidad_medida_nombre', 'cantidad']
+    .filter(campo => cuerpo[campo] == null || cuerpo[campo] === '');
+  if (faltantes.length) throw new ApiError(400, `Completa estos campos del lote: ${faltantes.join(', ')}.`);
   const lote = {
     user_nombre: req.usuarioId,
     nevera_id,
     producto_id,
     ingrediente_nombre: ingrediente_nombre === '' ? null : ingrediente_nombre ?? null,
     unidad_medida_nombre,
-    fecha_vencimiento: fecha_vencimiento == null ? null : fechaInventario(fecha_vencimiento),
+    fecha_vencimiento: fecha_vencimiento == null ? null : fechaInventario(fecha_vencimiento, 'fecha_vencimiento'),
     estado
   };
   await validarReferencias(Inventario, lote);
   const entrada = new Inventario({ ...lote, cantidad });
   await entrada.validate();
-  const itemInventario = await Inventario.findOne(lote).sort({ _id: 1 });
+  const itemInventario = await Inventario.findOne(identidadLote(entrada)).sort({ _id: 1 });
 
   if (itemInventario) {
     itemInventario.cantidad += entrada.cantidad;
@@ -1010,25 +1051,32 @@ app.get('/api/inventario', async (req, res, next) => {
     }
     if (vence_desde !== undefined || vence_hasta !== undefined) {
       filtro.fecha_vencimiento = {};
-      if (vence_desde !== undefined) filtro.fecha_vencimiento.$gte = fechaInventario(vence_desde);
-      if (vence_hasta !== undefined) filtro.fecha_vencimiento.$lte = fechaInventario(vence_hasta);
+      if (vence_desde !== undefined) filtro.fecha_vencimiento.$gte = fechaInventario(vence_desde, 'vence_desde');
+      if (vence_hasta !== undefined) filtro.fecha_vencimiento.$lte = fechaInventario(vence_hasta, 'vence_hasta');
       if (filtro.fecha_vencimiento.$gte > filtro.fecha_vencimiento.$lte) {
         throw new ApiError(400, 'El inicio del rango debe ser anterior a su fin');
       }
     }
     if (orden !== undefined && orden !== 'vencimiento') throw new ApiError(400, 'Orden inválido');
+    let consulta;
     if (orden === 'vencimiento') {
-      const consulta = Inventario.aggregate([
+      consulta = Inventario.aggregate([
         { $match: filtro },
         { $set: { sin_vencimiento: { $eq: [{ $ifNull: ['$fecha_vencimiento', null] }, null] } } },
         { $sort: { sin_vencimiento: 1, fecha_vencimiento: 1, _id: 1 } },
         { $unset: ['sin_vencimiento', 'alerta_vencimiento_generada'] }
       ]);
-      const inventarios = await paginar(consulta, req.query);
-      return res.status(200).json(responseFormat(true, 'Lista de inventario obtenida', inventarios));
+    } else {
+      consulta = Inventario.find(filtro).sort({ _id: 1 }).lean();
     }
-    const inventarios = await paginar(Inventario.find(filtro).sort({ _id: 1 }).lean(), req.query);
-    res.status(200).json(responseFormat(true, 'Lista de inventario obtenida', inventarios));
+    const paginacion = opcionesPaginacion(req.query);
+    if (!paginacion) return res.json(responseFormat(true, 'Lista de inventario obtenida', await consulta));
+    const { pagina, limite, salto } = paginacion;
+    const inventarios = await consulta.skip(salto).limit(limite + 1);
+    res.json({
+      ...responseFormat(true, 'Lista de inventario obtenida', inventarios.slice(0, limite)),
+      paginacion: { pagina, limite, hay_siguiente: inventarios.length > limite }
+    });
   } catch (error) {
     next(error);
   }
@@ -1044,20 +1092,36 @@ app.get('/api/inventario/:itemId', async (req, res, next) => {
 });
 
 mutacion('put', '/api/inventario/:itemId', async req => {
-  exigirPropietario(req.usuarioId, req.body.user_nombre);
+  const cuerpo = cuerpoInventario(req.body);
+  exigirPropietario(req.usuarioId, cuerpo.user_nombre);
   const campos = ['nevera_id', 'producto_id', 'unidad_medida_nombre', 'cantidad', 'fecha_vencimiento', 'estado', 'ingrediente_nombre'];
-  const cambios = Object.fromEntries(campos.filter(campo => Object.hasOwn(req.body, campo))
-    .map(campo => [campo, req.body[campo]]));
-  if (cambios.fecha_vencimiento != null) cambios.fecha_vencimiento = fechaInventario(cambios.fecha_vencimiento);
+  const cambios = Object.fromEntries(campos.filter(campo => Object.hasOwn(cuerpo, campo))
+    .map(campo => [campo, cuerpo[campo]]));
+  if (!Object.keys(cambios).length) throw new ApiError(400, 'Envía al menos un campo del lote para actualizar.');
+  if (cambios.fecha_vencimiento != null) {
+    cambios.fecha_vencimiento = fechaInventario(cambios.fecha_vencimiento, 'fecha_vencimiento');
+  }
   if (cambios.ingrediente_nombre === '') cambios.ingrediente_nombre = null;
   const filtro = { user_nombre: req.usuarioId };
-  await obtenerOFallar(Inventario, req.params.itemId, filtro);
+  const anterior = await obtenerOFallar(Inventario, req.params.itemId, filtro);
   await validarReferencias(Inventario, cambios);
 
-  const itemActualizado = await Inventario.findOneAndUpdate(
+  const guardado = await Inventario.findOneAndUpdate(
     { ...filtro, _id: req.params.itemId }, { $set: cambios }, { returnDocument: 'after', runValidators: true }
-  );
+  ).lean();
+  // La transacción revierte la edición si el lote pasa a coincidir con otro.
+  const identidad = identidadLote(guardado);
+  if (!isDeepStrictEqual(identidad, identidadLote(anterior))) {
+    const existente = await Inventario.findOne({ ...identidad, _id: { $ne: guardado._id } })
+      .sort({ _id: 1 }).select('_id').lean();
+    if (existente) {
+      throw new ApiError(409, 'Ya existe un lote con esos datos. Puedes ajustar la cantidad en el lote existente.', {
+        inventario_id: existente._id
+      });
+    }
+  }
 
+  const itemActualizado = Inventario.hydrate(guardado);
   await registrarHistorial(itemActualizado, 'ACTUALIZADO',
     `Se actualizó el alimento de la nevera ${itemActualizado.nevera_id}`);
 
@@ -1076,7 +1140,10 @@ mutacion('delete', '/api/inventario/:itemId', async req => {
 app.get('/api/historial_inventario', async (req, res, next) => {
   try {
     const filtro = await filtroPropietario(HistorialInventario, req.usuarioId);
-    const historial = await paginar(HistorialInventario.find(filtro).sort({ fecha: -1, _id: -1 }).lean(), req.query);
+    const consulta = HistorialInventario.find(filtro).sort({ fecha: -1, _id: -1 }).lean();
+    const paginacion = opcionesPaginacion(req.query);
+    if (paginacion) consulta.skip(paginacion.salto).limit(paginacion.limite);
+    const historial = await consulta;
     res.status(200).json(responseFormat(true, 'Historial de inventario obtenido', historial));
   } catch (error) {
     next(error);
@@ -1398,7 +1465,8 @@ conexion.then(iniciarAlertas).catch(() => {});
 
 // Inicialización del Servidor
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en http://localhost:${PORT}`);
-  console.log(`Documentación interactiva disponible en http://localhost:${PORT}/api-docs`);
+const servidor = app.listen(PORT, () => {
+  const { port } = servidor.address();
+  console.log(`Servidor corriendo en http://localhost:${port}`);
+  console.log(`Documentación interactiva disponible en http://localhost:${port}/api-docs`);
 });

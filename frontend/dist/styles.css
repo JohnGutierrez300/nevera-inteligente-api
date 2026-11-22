@@ -477,6 +477,7 @@ select {
 .filters button { min-height: 3rem; }
 .results { overflow: auto; min-height: 8rem; container-type: inline-size; }
 .results > p { margin: 0; padding: 1.1rem 1.2rem; }
+.inventory-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .65rem; margin-top: .9rem; }
 #notice, #lot-error, .form-error { overflow-wrap: anywhere; }
 tbody tr { transition: background var(--transition); }
 tbody tr:hover { background: #ecf7ee; }
@@ -491,6 +492,7 @@ tr:last-child td { border-bottom: 0; }
 .inventory-actions { display: flex; flex-wrap: wrap; gap: .42rem; }
 .inventory-actions .text-button { white-space: nowrap; }
 #lot-error { color: #9b262b; }
+#lot-error button, #detail-error button { margin: .4rem 0 0; }
 
 @media (hover: hover) {
   button:hover:not(:disabled) { transform: translateY(var(--button-lift)); }
@@ -774,14 +776,14 @@ dialog::backdrop { background: #0d271f9e; backdrop-filter: blur(5px); }
   .filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-@media (max-width: 56rem) {
+@media (max-width: 56rem), (max-width: 62rem) and (max-height: 32rem) and (hover: none) and (pointer: coarse) {
   body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   .sidebar { position: static; min-height: 0; gap: .65rem; padding: 1rem var(--page-gutter); }
   nav { display: flex; flex-wrap: wrap; }
   nav button, .logout { width: auto; }
 }
 
-@media (max-width: 44rem) {
+@media (max-width: 44rem), (max-width: 62rem) and (max-height: 32rem) and (hover: none) and (pointer: coarse) {
   .sidebar { flex-direction: row; align-items: center; }
   .sidebar > nav, .sidebar > .logout { display: none; }
 
@@ -841,7 +843,9 @@ dialog::backdrop { background: #0d271f9e; backdrop-filter: blur(5px); }
     from { transform: translateX(-100%); }
     to { transform: translateX(0); }
   }
+}
 
+@media (max-width: 44rem) {
   .welcome { grid-template-columns: 1fr; min-height: 0; gap: 1.5rem; }
   .welcome > div { padding-block: .5rem; }
   .welcome h1 { font-size: clamp(3.1rem, 12vw, 4.8rem); }

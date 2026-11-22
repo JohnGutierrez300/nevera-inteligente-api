@@ -17,7 +17,7 @@ const paginaHistorial = 20;
 
 export function createDashboard({
   request, element, action, passwordField, formatDate, notice, confirmAction, showDetails, openLotDetail,
-  getProfile, reload, navigate, onNotifications, onProfileSaved
+  getProfile, reload, navigate, onNotifications, onProfileSaved, onAccountDeleted
 }) {
   const editor = document.getElementById('editor-dialog');
   const form = document.getElementById('editor-form');
@@ -140,10 +140,10 @@ export function createDashboard({
   }
 
   async function home() {
-    const [lots, products, notifications] = await Promise.all([
+    const notifications = getNotifications().catch(() => null);
+    const [lots, products] = await Promise.all([
       data('/inventario?estado=EN_NEVERA&orden=vencimiento'),
-      data('/productos').catch(() => []),
-      getNotifications()
+      data('/productos').catch(() => [])
     ]);
     const names = new Map(products.map(product => [product._id, product.nombre]));
     const now = Date.now();
@@ -157,8 +157,7 @@ export function createDashboard({
     const metrics = [
       ['Lotes en nevera', active.length, 'inventory', ''],
       ['Vencen en 72 horas', soon.length, null, 'warning'],
-      ['Lotes vencidos', expired.length, null, 'critical'],
-      ['Avisos sin leer', notifications.filter(item => !item.leida).length, 'alerts', '']
+      ['Lotes vencidos', expired.length, null, 'critical']
     ];
     const heading = section('Hola, ' + (getProfile()?.nombre ?? ''), action('Ver inventario', () => navigate('inventory'), 'primary'));
     const tiles = metrics.map(([label, count, view, state]) => {
@@ -167,7 +166,15 @@ export function createDashboard({
       card.append(element('strong', String(count)), element('span', label));
       return card;
     });
-    heading.append(group('metric-grid', ...tiles));
+    const alerts = action('', () => navigate('alerts'), 'metric-card');
+    const unread = element('strong', '—');
+    const alertLabel = element('span', 'Consultando avisos…');
+    alerts.append(unread, alertLabel);
+    void notifications.then(items => {
+      if (items) unread.textContent = String(items.filter(item => !item.leida).length);
+      alertLabel.textContent = items ? 'Avisos sin leer' : 'Avisos no disponibles';
+    });
+    heading.append(group('metric-grid', ...tiles, alerts));
 
     const upcoming = section('Vencimientos');
     const rows = [...expired, ...soon].slice(0, 8);
@@ -461,13 +468,27 @@ export function createDashboard({
         onProfileSaved(response.data, true);
       });
     }
+    function deleteAccount() {
+      confirmAction('¿Eliminar tu cuenta?',
+        'La API comprobará si tienes registros vinculados. Cuando se elimine la cuenta, se cerrarán sus sesiones y se conservará el historial. Esta acción no se puede deshacer.',
+        'Eliminar cuenta', async () => {
+          try {
+            const response = await request(path, 'DELETE');
+            onAccountDeleted(response.message);
+          } catch (error) {
+            if (getProfile()) notice(error.message, true);
+          }
+        });
+    }
     const heading = section('Perfil', action('Editar perfil', edit, 'primary button-edit'));
     const details = document.createElement('dl');
     details.className = 'detail-list';
     const entries = [['Usuario', account.nombre], ['Correo', account.email], ['ID de cuenta', account._id]];
     if (account.catalogo_admin) entries.push(['Permiso', 'Administrador del catálogo']);
     for (const [title, value] of entries) details.append(element('dt', title), element('dd', value));
-    heading.append(details, group('feature-actions', action('Cambiar contraseña', changePassword, 'secondary')));
+    heading.append(details, group('feature-actions',
+      action('Cambiar contraseña', changePassword, 'secondary'),
+      action('Eliminar mi cuenta', deleteAccount, 'text-button danger')));
     return group('panel-content', heading);
   }
 

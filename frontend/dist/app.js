@@ -6,6 +6,9 @@ const forgotForm = byId('forgot-form');
 const resetForm = byId('reset-form');
 const filters = byId('filters');
 const results = byId('results');
+const inventoryPagination = byId('inventory-pagination');
+const previousPage = byId('inventory-previous');
+const nextPage = byId('inventory-next');
 const dialog = byId('lot-dialog');
 const deleteDialog = byId('delete-dialog');
 const updateDialog = byId('update-dialog');
@@ -17,7 +20,7 @@ const logoutButton = byId('logout');
 const mobileMenu = byId('mobile-menu');
 const mobileMenuToggle = byId('mobile-menu-toggle');
 const mobileMenuContent = byId('mobile-menu-content');
-const mobileViewport = matchMedia('(max-width: 44rem)');
+const mobileViewport = matchMedia('(max-width: 44rem), (max-width: 62rem) and (max-height: 32rem) and (hover: none) and (pointer: coarse)');
 const navButtons = [...document.querySelectorAll('[data-view]')];
 const views = {
   home: 'Inicio',
@@ -39,6 +42,8 @@ let registering = false;
 let recoveryToken = '';
 let currentView = 'home';
 let viewRequest = 0;
+let inventoryPage = 1;
+let inventoryFilters = new URLSearchParams();
 let editingId = '';
 let pendingConfirmation = null;
 let updateFeedbackTimer;
@@ -64,6 +69,14 @@ async function request(path, method = 'GET', body) {
     const error = new Error(payload?.message || 'La API no pudo completar la solicitud.');
     error.status = response.status;
     error.data = payload?.data;
+    const dependencies = error.data?.dependencias;
+    if (error.status === 409 && Array.isArray(dependencies) && dependencies.length) {
+      const related = dependencies.map(({ coleccion, registros }) => {
+        const name = coleccion === 'meal_preps' ? 'planes de comida' : coleccion.replaceAll('_', ' ');
+        return `${registros} en ${name}`;
+      });
+      error.message += `. Registros vinculados (${related.join(', ')}).`;
+    }
     throw error;
   }
   return payload;
@@ -112,6 +125,7 @@ function endSession(message = '') {
   user = null;
   viewRequest++;
   filters.reset();
+  inventoryPagination.hidden = true;
   results.replaceChildren();
   if (dialog.open) dialog.close();
   if (deleteDialog.open) deleteDialog.close();
@@ -240,14 +254,24 @@ if (incomingToken !== null) {
   }
 }
 
-function inventoryQuery() {
-  const query = new URLSearchParams({ orden: 'vencimiento' });
+function applyInventoryFilters() {
+  const query = new URLSearchParams();
   for (const [name, value] of new FormData(filters)) {
     if (!value.trim()) continue;
     if (name === 'vence_desde') query.set(name, value + 'T00:00:00.000-05:00');
     else if (name === 'vence_hasta') query.set(name, value + 'T23:59:59.999-05:00');
     else query.set(name, value.trim());
   }
+  inventoryFilters = query;
+  inventoryPage = 1;
+  if (currentView === 'inventory') void loadView();
+}
+
+function inventoryQuery() {
+  const query = new URLSearchParams(inventoryFilters);
+  query.set('orden', 'vencimiento');
+  query.set('pagina', inventoryPage);
+  query.set('limite', 20);
   return '?' + query;
 }
 
@@ -349,7 +373,9 @@ async function loadView() {
   if (!user) return;
   const generation = ++viewRequest;
   const view = currentView;
-  const inventory = currentView === 'inventory';
+  const inventory = view === 'inventory';
+  if (!inventory) inventoryPagination.hidden = true;
+  previousPage.disabled = nextPage.disabled = true;
   results.replaceChildren(element('p', 'Cargando…', 'muted'));
   try {
     if (!inventory) {
@@ -364,8 +390,16 @@ async function loadView() {
     if (generation !== viewRequest) return;
     if (!items.data.length) results.replaceChildren(element('p', 'No hay lotes para mostrar.', 'muted'));
     else renderInventory(items.data, products.data);
+    const page = items.paginacion;
+    inventoryPagination.hidden = !page || (page.pagina === 1 && !page.hay_siguiente);
+    if (page) {
+      byId('inventory-page').textContent = 'Página ' + page.pagina;
+      previousPage.disabled = page.pagina <= 1;
+      nextPage.disabled = !page.hay_siguiente;
+    }
   } catch (error) {
     if (generation !== viewRequest) return;
+    inventoryPagination.hidden = true;
     const message = element('p', error.message + ' ');
     message.append(action('Reintentar', loadView));
     results.replaceChildren(message);
@@ -421,11 +455,17 @@ for (const button of navButtons) button.addEventListener('click', () => {
 });
 filters.addEventListener('submit', event => {
   event.preventDefault();
+  applyInventoryFilters();
+});
+filters.addEventListener('reset', () => queueMicrotask(applyInventoryFilters));
+previousPage.addEventListener('click', () => {
+  inventoryPage--;
   void loadView();
 });
-filters.addEventListener('reset', () => queueMicrotask(() => {
-  if (currentView === 'inventory') void loadView();
-}));
+nextPage.addEventListener('click', () => {
+  inventoryPage++;
+  void loadView();
+});
 
 function fillSelect(name, records, label, selected, placeholder = 'Selecciona una opción') {
   const select = field(lotForm, name);
@@ -435,9 +475,17 @@ function fillSelect(name, records, label, selected, placeholder = 'Selecciona un
   select.value = selected || '';
 }
 
-function lotError(message = '') {
-  byId('lot-error').hidden = !message;
-  byId('lot-error').textContent = message;
+function showLotError(id, error) {
+  const message = byId(id);
+  message.hidden = !error;
+  message.textContent = error?.message ?? '';
+  const conflictId = error?.status === 409 && error.data?.inventario_id;
+  if (conflictId) {
+    message.append(' ', action('Ver lote existente', () => {
+      message.closest('dialog').close();
+      void openLotDetail(conflictId);
+    }, 'text-button button-view'));
+  }
 }
 
 async function openLot(lot) {
@@ -455,7 +503,7 @@ async function openLot(lot) {
       throw new Error('El catálogo necesita al menos un producto y una unidad de medida. Puedes consultarlo en Catálogo.');
     }
     lotForm.reset();
-    lotError();
+    showLotError('lot-error');
     editingId = lot?._id || '';
     byId('lot-title').textContent = editingId ? 'Editar lote' : 'Agregar lote';
     fillSelect('producto_id', products.data, product => product.nombre, lot?.producto_id);
@@ -490,8 +538,7 @@ function showDetails(title, entries, buttons = []) {
     actions.append(...buttons);
     content.append(actions);
   }
-  byId('detail-error').hidden = true;
-  byId('detail-error').textContent = '';
+  showLotError('detail-error');
   byId('detail-title').textContent = title;
   detailDialog.showModal();
 }
@@ -499,8 +546,7 @@ function showDetails(title, entries, buttons = []) {
 async function changeLotStatus(id, status) {
   const buttons = [...detailDialog.querySelectorAll('button')];
   for (const button of buttons) button.disabled = true;
-  const errorNotice = byId('detail-error');
-  errorNotice.hidden = true;
+  showLotError('detail-error');
   try {
     const response = await request('/inventario/' + encodeURIComponent(id), 'PUT', { estado: status });
     detailDialog.close();
@@ -508,8 +554,7 @@ async function changeLotStatus(id, status) {
     await loadView();
   } catch (error) {
     if (detailDialog.open) {
-      errorNotice.textContent = error.message;
-      errorNotice.hidden = false;
+      showLotError('detail-error', error);
     } else if (user) {
       notice(error.message, true);
     }
@@ -567,7 +612,7 @@ lotForm.addEventListener('submit', async event => {
   event.preventDefault();
   const save = byId('save-lot');
   save.disabled = byId('cancel').disabled = true;
-  lotError();
+  showLotError('lot-error');
   const body = Object.fromEntries(new FormData(lotForm));
   const lotId = editingId;
   body.cantidad = Number(body.cantidad);
@@ -585,7 +630,7 @@ lotForm.addEventListener('submit', async event => {
     }
     await loadView();
   } catch (error) {
-    if (dialog.open) lotError(error.message);
+    if (dialog.open) showLotError('lot-error', error);
     else notice(error.message, true);
   } finally {
     save.disabled = byId('cancel').disabled = false;
@@ -645,6 +690,7 @@ const dashboard = createDashboard({
   reload: loadView,
   navigate: selectView,
   onNotifications: unreadCount,
+  onAccountDeleted: endSession,
   onProfileSaved(profile, passwordChanged) {
     if (passwordChanged) {
       endSession('Contraseña cambiada. Inicia sesión con la nueva contraseña.');
