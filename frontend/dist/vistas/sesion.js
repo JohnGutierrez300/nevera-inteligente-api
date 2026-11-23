@@ -31,7 +31,7 @@ function bindSubmit(form, buttons, send, { validate, done } = {}) {
   return update;
 }
 
-function createPasswordChecklist(container, password) {
+function createPasswordChecklist(container, password, confirmation) {
   container.append(byId('password-requirements-template').content.cloneNode(true));
   const title = container.querySelector('[data-requirements-title]');
   const status = container.querySelector('[role="status"]');
@@ -40,6 +40,13 @@ function createPasswordChecklist(container, password) {
   title.id = container.id + '-title';
   status.id = container.id + '-status';
   container.querySelector('ul').setAttribute('aria-labelledby', title.id);
+  const confirmationRule = container.querySelector('[data-password-rule="confirmation"]');
+  if (confirmation) {
+    confirmationRule.id = container.id + '-confirmation';
+    confirmation.setAttribute('aria-describedby', confirmationRule.id);
+  } else {
+    confirmationRule.remove();
+  }
   const rules = [...container.querySelectorAll('[data-password-rule]')].map(node => ({
     node,
     key: node.dataset.passwordRule,
@@ -60,6 +67,12 @@ function createPasswordChecklist(container, password) {
     update() {
       const value = password.value;
       const checks = passwordRequirements(value);
+      const validPassword = Object.values(checks).every(Boolean);
+      if (confirmation) {
+        const repeated = confirmation.value;
+        checks.confirmation = Boolean(value) && value === repeated;
+        confirmation.setAttribute('aria-invalid', String(Boolean(repeated) && !checks.confirmation));
+      }
       const label = value.length > passwordLengthLimit ? 'La contraseña es demasiado larga' : minimumLabel;
       if (lengthLabel.textContent !== label) lengthLabel.textContent = label;
       let met = 0;
@@ -73,7 +86,7 @@ function createPasswordChecklist(container, password) {
       const complete = met === rules.length;
       const summary = `${met} de ${rules.length} requisitos cumplidos.`;
       if (status.textContent !== summary) status.textContent = summary;
-      password.setAttribute('aria-invalid', String(Boolean(value) && !complete));
+      password.setAttribute('aria-invalid', String(Boolean(value) && !validPassword));
       return complete;
     }
   };
@@ -89,8 +102,9 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
   const forgotToggle = byId('forgot-toggle');
   const password = field(auth, 'password');
   const resetPassword = field(resetForm, 'password');
+  const resetConfirmation = field(resetForm, 'confirmation');
   const registerChecklist = createPasswordChecklist(byId('registration-password-rules'), password);
-  const resetChecklist = createPasswordChecklist(byId('reset-password-rules'), resetPassword);
+  const resetChecklist = createPasswordChecklist(byId('reset-password-rules'), resetPassword, resetConfirmation);
   resetChecklist.show(true);
   const forms = { login: auth, forgot: forgotForm, reset: resetForm };
   let registering = false;
@@ -133,6 +147,7 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
   for (const event of ['input', 'change']) {
     password.addEventListener(event, updateAuthSubmit);
     resetPassword.addEventListener(event, updateResetSubmit);
+    resetConfirmation.addEventListener(event, updateResetSubmit);
   }
   toggle.addEventListener('click', () => setRegistration(!registering));
   forgotToggle.addEventListener('click', () => {
