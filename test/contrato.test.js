@@ -5,9 +5,9 @@ const { test } = require('node:test');
 const YAML = require('yamljs');
 
 test('Swagger documenta las operaciones de Express y sus respuestas nuevas', () => {
-  const raiz = path.resolve(__dirname, '..');
-  const servidor = fs.readFileSync(path.join(raiz, 'server.js'), 'utf8');
-  const swagger = YAML.load(path.join(raiz, 'swagger.yaml'));
+  const backend = path.resolve(__dirname, '..', 'backend');
+  const servidor = fs.readFileSync(path.join(backend, 'server.js'), 'utf8');
+  const swagger = YAML.load(path.join(backend, 'swagger', 'swagger.yaml'));
   const rutas = /(?:app\.(get|post|put|patch|delete)\(|mutacion\('(get|post|put|patch|delete)',\s*)'(\/api\/[^']+)'/g;
   const implementadas = Array.from(servidor.matchAll(rutas), ([, directo, transaccion, ruta]) =>
     (directo ?? transaccion) + ' ' + ruta.replace(/:(\w+)/g, '{$1}'));

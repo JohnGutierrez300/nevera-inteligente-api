@@ -1,14 +1,15 @@
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
+const { readFile } = require('node:fs/promises');
 const path = require('node:path');
 const { after, before, test } = require('node:test');
 const { setTimeout: pause } = require('node:timers/promises');
 const { MongoMemoryReplSet } = require('mongodb-memory-server-core');
 const { mongo: { MongoClient, ObjectId } } = require('mongoose');
 const { chromium } = require('playwright');
-const { configurarCorreo } = require('../correo-recuperacion');
-const { huella, protegerClave } = require('../credenciales');
+const { configurarCorreo } = require('../backend/correo-recuperacion');
+const { huella, protegerClave } = require('../backend/credenciales');
 
 const raiz = path.resolve(__dirname, '..');
 const clave = 'PruebaNevera2026!';
@@ -191,6 +192,22 @@ before(async () => {
 after(async () => {
   await detenerProceso(servidor);
   await replica?.stop();
+});
+
+test('El servidor publica la aplicación y los archivos de Swagger desde sus carpetas', async () => {
+  const archivos = [
+    ['/app/', 'frontend/dist/index.html'],
+    ['/swagger-assets/validacion-tiempo-real.js', 'backend/swagger/assets/validacion-tiempo-real.js'],
+    ['/swagger-assets/validacion-tiempo-real.css', 'backend/swagger/assets/validacion-tiempo-real.css']
+  ];
+  for (const [ruta, archivo] of archivos) {
+    const respuesta = await fetch(baseUrl + ruta);
+    assert.equal(respuesta.status, 200, ruta);
+    assert.equal(await respuesta.text(), await readFile(path.join(raiz, archivo), 'utf8'));
+  }
+  const swagger = await fetch(baseUrl + '/api-docs/swagger-ui-init.js');
+  assert.equal(swagger.status, 200);
+  assert.match(await swagger.text(), /\/api\/notificaciones\/resumen/);
 });
 
 test('El registro reserva los IDs de administrador y el ingreso limita los fallos de una cuenta', async t => {
