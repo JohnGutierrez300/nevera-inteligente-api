@@ -6,6 +6,7 @@ import { createInventoryView, lotDeletionMessage, lotDetails } from '../vistas/i
 import { createSessionView } from '../vistas/sesion.js';
 import { createDashboardController } from './dashboard.js';
 import { createIdleTimer } from './inactividad.js';
+import { createNotificationAlerts } from './notificaciones.js';
 
 const inventoryPageSize = 20;
 const idleMessage = 'Tu sesión se cerró tras 7 minutos de inactividad. Vuelve a iniciar sesión.';
@@ -18,6 +19,7 @@ export function startApp() {
   let inventoryFilters = {};
   let editingId = '';
   let recoveryToken = '';
+  let unreadRefresh;
 
   const model = createModel(async (path, method, body, options) => {
     const active = user;
@@ -42,7 +44,15 @@ export function startApp() {
     onExpired: () => endSession(idleMessage)
   });
   const dialogs = createDialogs();
-  const app = createAppView({ onNavigate: selectView, onLogout: signOut });
+  const app = createAppView({
+    onNavigate: selectView,
+    onLogout: signOut,
+    onOpenNotifications() {
+      dashboard.resetAlertFilters();
+      void selectView('alerts');
+    }
+  });
+  const notifications = createNotificationAlerts({ showUnread: app.showUnread, announce: app.showNotification });
   const session = createSessionView({
     onAuth: submitAuth,
     onRecover: recoverPassword,
@@ -68,7 +78,7 @@ export function startApp() {
     getGeneration: () => viewRequest,
     reload: loadView,
     navigate: selectView,
-    onUnread: app.showUnread,
+    onNotifications: notifications.sync,
     onAccountDeleted: endSession,
     onProfileSaved(profile, passwordChanged) {
       if (passwordChanged) {
@@ -89,12 +99,16 @@ export function startApp() {
     if (!Number.isFinite(remainingMs) || remainingMs <= 0) return endSession(idleMessage);
     user = profile;
     idle.start(profile._id, remainingMs);
+    notifications.start(profile._id);
     showSession(true);
-    return selectView(view);
+    const loaded = selectView(view);
+    if (view !== 'home' && view !== 'alerts') void refreshUnread();
+    return loaded;
   }
 
   function endSession(message = '') {
     idle.stop();
+    notifications.stop();
     user = null;
     viewRequest++;
     inventoryPage = 1;
@@ -120,6 +134,7 @@ export function startApp() {
         notice('Cuenta creada. Ya puedes iniciar sesión.');
         return;
       }
+      notifications.enableSound();
       const response = await model.account.signIn(credentials);
       if (generation === viewRequest) await startSession(response.data?.perfil, response.data?.inactividad_restante_ms);
     } catch (error) {
@@ -333,11 +348,15 @@ export function startApp() {
   }
 
   async function refreshUnread() {
-    if (!user || document.hidden) return;
+    const active = user;
+    if (!active || document.hidden || unreadRefresh === active) return;
+    unreadRefresh = active;
     try {
       await dashboard.loadNotifications();
     } catch {
       // La bandeja vuelve a consultar los avisos al abrirse.
+    } finally {
+      if (unreadRefresh === active) unreadRefresh = undefined;
     }
   }
 
@@ -358,6 +377,12 @@ export function startApp() {
   }
 
   window.addEventListener('focus', refreshUnread);
+  document.addEventListener('visibilitychange', refreshUnread);
+  for (const event of ['click', 'keydown']) {
+    window.addEventListener(event, interaction => {
+      if (user && interaction.isTrusted) notifications.enableSound();
+    }, { capture: true });
+  }
   window.addEventListener('hashchange', openRecoveryLink);
   setInterval(refreshUnread, 60 * 1000);
   if (!openRecoveryLink()) void restoreSession();

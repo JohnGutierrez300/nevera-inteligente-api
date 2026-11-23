@@ -326,6 +326,10 @@ export function createDashboardView() {
   const filters = { type: '', read: '' };
   return {
     home, plans, planEditor, planDetails, history, catalog, catalogEditor, profile, profileEditor, passwordEditor,
-    alerts: (items, actions) => alerts(items, filters, actions)
+    alerts: (items, actions) => alerts(items, filters, actions),
+    resetAlertFilters() {
+      filters.type = '';
+      filters.read = '';
+    }
   };
 }

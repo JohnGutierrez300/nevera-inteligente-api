@@ -10,6 +10,7 @@
   <link rel="modulepreload" href="controladores/aplicacion.js">
   <link rel="modulepreload" href="controladores/dashboard.js">
   <link rel="modulepreload" href="controladores/inactividad.js">
+  <link rel="modulepreload" href="controladores/notificaciones.js">
   <link rel="modulepreload" href="modelos/credenciales.js">
   <link rel="modulepreload" href="modelos/nevera.js">
   <link rel="modulepreload" href="vistas/aplicacion.js">
@@ -121,8 +122,23 @@
     <section id="dashboard" hidden>
       <header class="heading">
         <div><p class="eyebrow">Mi nevera</p><h1 id="view-title">Inventario</h1></div>
-        <button id="add" class="primary button-add">Agregar lote</button>
+        <div class="heading-actions">
+          <button id="add" class="primary button-add">Agregar lote</button>
+          <button id="notification-bell" class="secondary notification-bell" type="button" aria-label="Abrir notificaciones" title="Notificaciones">
+            <span class="bell-icon" aria-hidden="true"></span>
+            <span class="bell-count" id="bell-count" aria-hidden="true" hidden></span>
+          </button>
+        </div>
       </header>
+      <p id="notification-announcer" class="visually-hidden" role="status" aria-atomic="true"></p>
+      <div id="notification-toast" class="notification-toast" hidden>
+        <div>
+          <strong id="notification-toast-title"></strong>
+          <p id="notification-toast-message"></p>
+          <button id="notification-open" class="text-button button-view" type="button">Ver avisos</button>
+        </div>
+        <button id="notification-dismiss" class="text-button notification-dismiss" type="button" aria-label="Cerrar aviso"><span aria-hidden="true">×</span></button>
+      </div>
       <form id="filters" class="panel filters">
         <label>Buscar producto<input name="busqueda" type="search" maxlength="100" placeholder="Ej. Leche"></label>
         <label>Nevera<input name="nevera_id" placeholder="Todas"></label>

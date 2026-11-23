@@ -7,10 +7,12 @@ const unreadCount = items => items.filter(item => !item.leida).length;
 
 export function createDashboardController({
   model, dialogs, getProfile, getGeneration, navigate, reload, openLotDetail,
-  onUnread, onProfileSaved, onAccountDeleted
+  onNotifications, onProfileSaved, onAccountDeleted
 }) {
   const view = createDashboardView();
   let catalog = 'productos';
+  let notificationRequest = 0;
+  let homeSummary;
 
   function edit(form, save) {
     if (!getProfile()) return;
@@ -46,12 +48,17 @@ export function createDashboardController({
 
   async function loadNotifications() {
     const profile = getProfile();
+    const generation = ++notificationRequest;
     const items = await model.notifications.list();
-    if (profile && profile === getProfile()) onUnread(unreadCount(items));
+    if (profile && profile === getProfile() && generation === notificationRequest) {
+      onNotifications(items);
+      if (homeSummary?.node.isConnected) homeSummary.showUnread(unreadCount(items));
+    }
     return items;
   }
 
   async function home() {
+    const generation = getGeneration();
     const notifications = loadNotifications().catch(() => null);
     const [inventory, products] = await Promise.all([
       model.inventory.list({ estado: 'EN_NEVERA' }),
@@ -64,6 +71,7 @@ export function createDashboardController({
       onNavigate: navigate,
       onViewLot: openLotDetail
     });
+    if (generation === getGeneration()) homeSummary = summary;
     void notifications.then(items => summary.showUnread(items ? unreadCount(items) : null));
     return summary.node;
   }
@@ -210,5 +218,5 @@ export function createDashboardController({
   }
 
   const loaders = { home, plans, alerts, history, catalog: directory, profile };
-  return { load: name => loaders[name](), loadNotifications };
+  return { load: name => loaders[name](), loadNotifications, resetAlertFilters: view.resetAlertFilters };
 }

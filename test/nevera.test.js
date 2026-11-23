@@ -688,6 +688,75 @@ test('El menú táctil horizontal funciona e Inicio sigue disponible cuando fall
   await pagina.getByRole('heading', { name: 'Inventario', exact: true }).waitFor();
 });
 
+test('La campana y el sonido anuncian avisos nuevos al entrar y durante la sesión, sin repetirlos', { timeout: 45_000 }, async t => {
+  const id = '7016';
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
+  const bearer = await sesion(id);
+  const crearAviso = (auth, mensaje) => correcto('/notificaciones', {
+    ...auth, method: 'POST', body: { mensaje, tipo: 'STOCK_BAJO' }
+  });
+  const inicial = await crearAviso(bearer, 'Primer aviso al ingresar');
+  await cerrarSesion(bearer);
+  const navegador = await abrirNavegador(t);
+  const pagina = await navegador.newPage({ viewport: { width: 1200, height: 800 } });
+  await pagina.addInitScript(() => {
+    window.tonosNotificacion = 0;
+    window.AudioContext = class extends window.AudioContext {
+      createOscillator() {
+        const note = super.createOscillator();
+        const start = note.start.bind(note);
+        note.start = time => {
+          start(time);
+          window.tonosNotificacion++;
+        };
+        return note;
+      }
+    };
+  });
+  await pagina.clock.install();
+  await entrar(pagina, id);
+  const toast = pagina.locator('#notification-toast');
+  await toast.getByText(inicial.mensaje, { exact: true }).waitFor();
+  await pagina.waitForFunction(() => window.tonosNotificacion === 2);
+  await pagina.getByRole('button', { name: 'Abrir notificaciones, 1 sin leer', exact: true }).waitFor();
+
+  const cookie = (await pagina.context().cookies()).find(item => item.name === 'nevera_session');
+  assert.ok(cookie);
+  const web = { cookie: `${cookie.name}=${cookie.value}` };
+  const nuevo = await crearAviso(web, 'Aviso nuevo durante la sesión');
+  await pagina.clock.fastForward(60_000);
+  await toast.getByText(nuevo.mensaje, { exact: true }).waitFor();
+  await pagina.waitForFunction(() => window.tonosNotificacion === 4);
+  assert.equal(await pagina.locator('.metric-card').filter({ hasText: 'Avisos sin leer' }).locator('strong').textContent(), '2');
+  await pagina.getByRole('button', { name: 'Abrir notificaciones, 2 sin leer', exact: true }).click();
+  const fila = pagina.locator('.feature-row').filter({ hasText: nuevo.mensaje });
+  await fila.getByRole('button', { name: 'Marcar como leída', exact: true }).click();
+  await pagina.getByRole('button', { name: 'Abrir notificaciones, 1 sin leer', exact: true }).waitFor();
+  await fila.getByRole('button', { name: 'Marcar sin leer', exact: true }).click();
+  await pagina.getByRole('button', { name: 'Abrir notificaciones, 2 sin leer', exact: true }).waitFor();
+  assert.equal(await pagina.evaluate(() => window.tonosNotificacion), 4);
+  await pagina.locator('select[name="lectura"]').selectOption('read');
+  assert.ok(await fila.isHidden());
+  await pagina.getByRole('button', { name: 'Abrir notificaciones, 2 sin leer', exact: true }).click();
+  await fila.waitFor();
+
+  await pagina.setViewportSize({ width: 360, height: 800 });
+  await pagina.goto(baseUrl + '/app/?vista=inventory');
+  await pagina.getByRole('button', { name: 'Abrir notificaciones, 2 sin leer', exact: true }).waitFor();
+  assert.ok(await toast.isHidden());
+  assert.ok(await pagina.getByRole('button', { name: 'Abrir menú' }).isVisible());
+  const alRegresar = await crearAviso(web, 'Aviso recibido antes de volver');
+  await pagina.reload();
+  await toast.getByText(alRegresar.mensaje, { exact: true }).waitFor();
+  assert.equal(await pagina.evaluate(() => window.tonosNotificacion), 0);
+  const campana = pagina.getByRole('button', { name: 'Abrir notificaciones, 3 sin leer', exact: true });
+  const limites = await campana.boundingBox();
+  assert.ok(limites && limites.x >= 0 && limites.x + limites.width <= 360);
+  await campana.click();
+  await pagina.getByRole('heading', { name: alRegresar.mensaje, exact: true }).waitFor();
+  await pagina.waitForFunction(() => window.tonosNotificacion === 2);
+});
+
 test('Mi cuenta requiere el nombre exacto y respeta el bloqueo por dependencias al eliminar', { timeout: 35_000 }, async t => {
   const idLibre = '7005';
   const idCuentaWeb = '7009';

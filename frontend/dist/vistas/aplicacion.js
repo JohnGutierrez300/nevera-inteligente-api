@@ -10,16 +10,31 @@ export const viewTitles = {
   profile: 'Mi cuenta'
 };
 
-export function createAppView({ onNavigate, onLogout }) {
+export function createAppView({ onNavigate, onLogout, onOpenNotifications }) {
   const dashboard = byId('dashboard');
   const results = byId('results');
   const navigation = byId('navigation');
   const logout = byId('logout');
+  const bell = byId('notification-bell');
+  const bellCount = byId('bell-count');
+  const menuCount = byId('unread-count');
+  const toast = byId('notification-toast');
+  const toastTitle = byId('notification-toast-title');
+  const toastMessage = byId('notification-toast-message');
+  const announcement = byId('notification-announcer');
   const mobileMenu = byId('mobile-menu');
   const mobileToggle = byId('mobile-menu-toggle');
   const mobileContent = byId('mobile-menu-content');
   const mobileViewport = matchMedia('(max-width: 44rem), (max-width: 62rem) and (max-height: 32rem) and (hover: none) and (pointer: coarse)');
   const navButtons = [...navigation.querySelectorAll('[data-view]')];
+  let toastTimer;
+
+  function dismissNotification() {
+    clearTimeout(toastTimer);
+    toast.hidden = true;
+    toastTitle.textContent = toastMessage.textContent = announcement.textContent = '';
+    bell.removeAttribute('data-new');
+  }
 
   function restoreSidebarMenu() {
     if (mobileMenu.open || navigation.parentElement !== mobileContent) return;
@@ -53,15 +68,33 @@ export function createAppView({ onNavigate, onLogout }) {
     void onNavigate(button.dataset.view);
   });
   logout.addEventListener('click', onLogout);
+  bell.addEventListener('click', onOpenNotifications);
+  byId('notification-open').addEventListener('click', () => {
+    onOpenNotifications();
+    bell.focus({ preventScroll: true });
+  });
+  byId('notification-dismiss').addEventListener('click', () => {
+    dismissNotification();
+    bell.focus({ preventScroll: true });
+  });
 
   return {
     showSession(active) {
-      if (!active) closeMobileMenu();
+      if (!active) {
+        closeMobileMenu();
+        dismissNotification();
+      }
       for (const control of [dashboard, navigation, logout, mobileToggle]) control.hidden = !active;
     },
     setLogoutBusy(busy) { logout.disabled = busy; },
     select(view) {
       byId('view-title').textContent = viewTitles[view];
+      if (view === 'alerts') {
+        bell.setAttribute('aria-current', 'page');
+        dismissNotification();
+      } else {
+        bell.removeAttribute('aria-current');
+      }
       for (const button of navButtons) {
         if (button.dataset.view === view) button.setAttribute('aria-current', 'page');
         else button.removeAttribute('aria-current');
@@ -75,10 +108,26 @@ export function createAppView({ onNavigate, onLogout }) {
       results.replaceChildren(message);
     },
     showUnread(count) {
-      const badge = byId('unread-count');
-      badge.hidden = count === 0;
-      badge.textContent = count > 99 ? '99+' : String(count);
-      badge.setAttribute('aria-label', `${count} notificaciones sin leer`);
+      for (const badge of [bellCount, menuCount]) {
+        badge.hidden = count === 0;
+        badge.textContent = count > 99 ? '99+' : String(count);
+      }
+      menuCount.setAttribute('aria-label', `${count} notificaciones sin leer`);
+      bell.toggleAttribute('data-unread', count > 0);
+      bell.setAttribute('aria-label', count ? `Abrir notificaciones, ${count} sin leer` : 'Abrir notificaciones');
+    },
+    showNotification(items) {
+      const title = items.length === 1 ? 'Nueva notificación' : `${items.length} notificaciones nuevas`;
+      const message = items[0].mensaje;
+      clearTimeout(toastTimer);
+      toastTitle.textContent = title;
+      toastMessage.textContent = message;
+      toast.hidden = false;
+      announcement.textContent = `${title}. ${message}`;
+      bell.setAttribute('data-new', '');
+      toastTimer = setTimeout(() => {
+        if (!toast.contains(document.activeElement)) dismissNotification();
+      }, 10_000);
     }
   };
 }
