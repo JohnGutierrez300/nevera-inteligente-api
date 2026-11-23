@@ -197,7 +197,7 @@ export function startApp() {
       }
       const [items, products] = await Promise.all([
         model.inventory.list({ ...inventoryFilters, pagina: inventoryPage, limite: inventoryPageSize }),
-        model.catalog.list('productos').catch(() => [])
+        model.catalog.productsForDisplay().catch(() => [])
       ]);
       if (generation === viewRequest) app.showResults(inventory.render(items.data, products, items.paginacion));
     } catch (error) {
@@ -233,7 +233,7 @@ export function startApp() {
     if (!user || dialogs.detailsOpen) return;
     const generation = viewRequest;
     try {
-      const [lot, products] = await Promise.all([model.inventory.get(id), model.catalog.list('productos').catch(() => [])]);
+      const [lot, products] = await Promise.all([model.inventory.get(id), model.catalog.productsForDisplay().catch(() => [])]);
       if (generation !== viewRequest) return;
       dialogs.showDetails(lotDetails(lot, products, {
         onEdit(item) {

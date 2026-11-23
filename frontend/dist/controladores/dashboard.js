@@ -55,7 +55,7 @@ export function createDashboardController({
     const notifications = loadNotifications().catch(() => null);
     const [inventory, products] = await Promise.all([
       model.inventory.list({ estado: 'EN_NEVERA' }),
-      model.catalog.list('productos').catch(() => [])
+      model.catalog.productsForDisplay().catch(() => [])
     ]);
     const summary = view.home({
       account: getProfile(),
@@ -121,7 +121,7 @@ export function createDashboardController({
 
   async function history() {
     const [items, products] = await Promise.all([
-      model.history.list(1, historyPageSize), model.catalog.list('productos').catch(() => [])
+      model.history.list(1, historyPageSize), model.catalog.productsForDisplay().catch(() => [])
     ]);
     let page = 1;
     const timeline = view.history(items, products, items.length >= historyPageSize, {

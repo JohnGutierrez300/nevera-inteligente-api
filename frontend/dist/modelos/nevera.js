@@ -21,6 +21,7 @@ export async function requestApi(path, method = 'GET', body) {
 }
 
 const byId = (path, id) => path + '/' + encodeURIComponent(id);
+const productReferenceMaxAgeMs = 15_000;
 
 function inventoryUrl(filters) {
   const { vence_desde, vence_hasta, ...options } = filters;
@@ -63,6 +64,29 @@ export function createModel(request) {
   const read = async path => (await request(path)).data;
   const save = (path, id, payload) => id ? request(byId(path, id), 'PUT', payload) : request(path, 'POST', payload);
   const remove = (path, id) => request(byId(path, id), 'DELETE');
+  let products;
+
+  function listProducts(reuse = false) {
+    if (products && (products.expiresAt === null || (reuse && products.expiresAt > performance.now()))) {
+      return products.result;
+    }
+    const entry = { expiresAt: null };
+    entry.result = read('/productos').then(items => {
+      entry.expiresAt = performance.now() + productReferenceMaxAgeMs;
+      return items;
+    }, error => {
+      if (products === entry) products = undefined;
+      throw error;
+    });
+    products = entry;
+    return entry.result;
+  }
+
+  async function changeCatalog(kind, change) {
+    const response = await change;
+    if (kind === 'productos') products = undefined;
+    return response;
+  }
 
   return {
     account: {
@@ -100,9 +124,10 @@ export function createModel(request) {
       get: id => read(byId('/historial_inventario', id))
     },
     catalog: {
-      list: kind => read('/' + kind),
-      create: (kind, fields) => request('/' + kind, 'POST', catalogPayload(kind, fields)),
-      remove: (kind, id) => remove('/' + kind, id)
+      list: kind => kind === 'productos' ? listProducts() : read('/' + kind),
+      productsForDisplay: () => listProducts(true),
+      create: (kind, fields) => changeCatalog(kind, request('/' + kind, 'POST', catalogPayload(kind, fields))),
+      remove: (kind, id) => changeCatalog(kind, remove('/' + kind, id))
     }
   };
 }

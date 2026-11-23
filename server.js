@@ -337,11 +337,12 @@ async function autenticar(req, res, next) {
   if (sesionWeb && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) exigirOrigenWeb(req);
   const ahora = new Date();
   const sesion = token && await Sesion.findOne({ _id: huella(token), vence: { $gt: ahora } }).lean();
-  const usuario = sesion && await Usuario.findById(sesion.usuario).select('+password_hash').lean();
-  const credencial = typeof usuario?.password_hash === 'string' && huella(usuario.password_hash);
-  const activa = credencial && credencial === sesion.credencial &&
-    await buscarSesionActiva(usuario._id, credencial, ahora);
-  if (!activa || activa._id !== sesion._id) {
+  const [usuario, activa] = typeof sesion?.credencial === 'string' ? await Promise.all([
+    Usuario.findById(sesion.usuario).select('+password_hash').lean(),
+    buscarSesionActiva(sesion.usuario, sesion.credencial, ahora)
+  ]) : [];
+  const credencialValida = typeof usuario?.password_hash === 'string' && huella(usuario.password_hash) === sesion.credencial;
+  if (!credencialValida || activa?._id !== sesion._id) {
     if (sesionWeb) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
     res.set('WWW-Authenticate', 'Bearer');
     throw new ApiError(401, 'Inicia sesión y proporciona un token válido');

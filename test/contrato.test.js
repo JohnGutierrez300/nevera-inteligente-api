@@ -25,3 +25,33 @@ test('Swagger documenta las operaciones de Express y sus respuestas nuevas', () 
   assert.ok(swagger.paths['/api/inventario/{itemId}'].put.responses[409]);
   assert.ok(swagger.paths['/api/salud'].get.responses[503]);
 });
+
+test('Las consultas de productos se comparten y se invalidan después de eliminar un producto', async () => {
+  const { createModel } = require('../frontend/dist/modelos/nevera.js');
+  const producto = { _id: 'LECHE', nombre: 'Leche de prueba' };
+  let lecturas = 0;
+  let respuesta = Promise.resolve([producto]);
+  const catalogo = createModel(async (ruta, metodo = 'GET') => {
+    if (metodo === 'DELETE') return { success: true };
+    assert.equal(ruta, '/productos');
+    lecturas++;
+    return { data: await respuesta };
+  }).catalog;
+
+  const inicial = catalogo.productsForDisplay();
+  assert.equal(catalogo.productsForDisplay(), inicial);
+  await inicial;
+  assert.deepEqual(await catalogo.productsForDisplay(), [producto]);
+  assert.equal(lecturas, 1);
+
+  const anterior = Promise.withResolvers();
+  respuesta = anterior.promise;
+  const consultaAnterior = catalogo.list('productos');
+  await catalogo.remove('productos', producto._id);
+  respuesta = Promise.resolve([]);
+  assert.deepEqual(await catalogo.productsForDisplay(), []);
+  anterior.resolve([producto]);
+  await consultaAnterior;
+  assert.deepEqual(await catalogo.productsForDisplay(), []);
+  assert.equal(lecturas, 3);
+});
