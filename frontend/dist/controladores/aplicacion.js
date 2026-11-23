@@ -141,12 +141,17 @@ export function startApp() {
       }
       notifications.enableSound();
       const response = await model.account.signIn(credentials);
-      if (generation === viewRequest) await startSession(response.data?.perfil, response.data?.inactividad_restante_ms);
+      if (generation !== viewRequest) return;
+      session.clearLoginLock(credentials.nombre);
+      await startSession(response.data?.perfil, response.data?.inactividad_restante_ms);
     } catch (error) {
       if (generation !== viewRequest) return;
       if (!registering && error.status === 429 && Number.isSafeInteger(error.retryAfter) && error.retryAfter > 0) {
-        session.blockLogin(credentials.nombre, error.retryAfter);
+        session.blockLogin(credentials.nombre, error.retryAfter, error.data?.ultimo_intento === true);
+      } else if (!registering && error.status === 423) {
+        session.requireRecovery(credentials.nombre);
       } else {
+        if (!registering && error.status === 409) session.clearLoginLock(credentials.nombre);
         notice(error);
       }
     }
@@ -169,21 +174,26 @@ export function startApp() {
     notice();
     try {
       const response = await model.account.recover(email);
-      if (generation === viewRequest) notice(response.message);
+      if (generation !== viewRequest) return;
+      recoveryToken = '';
+      session.showPasswordReset(email.trim());
+      notice(response.message);
     } catch (error) {
       if (generation === viewRequest) notice(error);
     }
   }
 
-  async function resetPassword({ password, confirmation }) {
+  async function resetPassword({ password, confirmation, email, codigo }) {
     const generation = viewRequest;
     notice();
     try {
       if (password !== confirmation) throw new Error('Las contraseñas deben coincidir.');
-      const response = await model.account.reset(recoveryToken, password);
+      const verification = recoveryToken ? { token: recoveryToken } : { email, codigo };
+      const response = await model.account.reset(verification, password);
       if (generation !== viewRequest) return;
       recoveryToken = '';
       session.resetPasswordForm();
+      session.setRegistration(false);
       session.select('login');
       notice(response.message);
     } catch (error) {
@@ -384,7 +394,7 @@ export function startApp() {
     recoveryToken = '';
     if (/^[a-f0-9]{64}$/.test(incomingToken)) {
       recoveryToken = incomingToken;
-      session.select('reset');
+      session.showPasswordReset();
     } else {
       session.select('forgot');
       notice('El enlace no es válido. Solicita uno nuevo.', true);

@@ -98,7 +98,7 @@ export function createModel(request) {
       signOut: () => request('/usuarios/logout', 'POST'),
       reportActivity: transcurrido_ms => request('/usuarios/actividad', 'POST', { transcurrido_ms }, { keepalive: true }),
       recover: email => request('/usuarios/recuperar-contrasena', 'POST', { email }),
-      reset: (token, password) => request('/usuarios/restablecer-contrasena', 'POST', { token, password }),
+      reset: (verification, password) => request('/usuarios/restablecer-contrasena', 'POST', { ...verification, password }),
       update: (id, fields) => request(byId('/usuarios', id), 'PUT', fields),
       remove: id => remove('/usuarios', id)
     },

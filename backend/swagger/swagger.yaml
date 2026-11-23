@@ -58,7 +58,7 @@ paths:
       tags: [Usuarios]
       operationId: loginUser
       summary: Iniciar sesión web u obtener un token Bearer
-      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger. Cada cuenta admite una sesión activa. La sesión vence tras 7 minutos sin actividad. El navegador que ya tiene la cookie válida puede continuar con la misma sesión. El quinto fallo bloquea el ingreso de esa cuenta hasta que termine la ventana de cinco minutos iniciada con el primer intento. Una contraseña correcta antes del bloqueo reinicia el contador.
+      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger. Cada cuenta admite una sesión activa que vence tras 7 minutos sin actividad. Cinco fallos en una ventana de cinco minutos inician una espera de cinco minutos completos desde el quinto fallo. Al terminar la espera hay un último intento. Si falla, el ingreso requiere restablecer la contraseña por correo. Se puede solicitar la recuperación desde el inicio de la espera.
       requestBody:
         required: true
         content:
@@ -110,8 +110,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "423":
+          description: La cuenta requiere recuperar la contraseña por correo antes de iniciar sesión.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
         "429":
-          description: La cuenta alcanzó cinco intentos fallidos o hay verificaciones de contraseña en curso. Espera el tiempo indicado en Retry-After.
+          description: La cuenta está en espera o ya hay verificaciones en curso. Retry-After indica el tiempo restante. En la espera de cinco minutos, data.ultimo_intento indica que queda un solo intento.
           headers:
             Retry-After:
               description: Segundos antes de intentar nuevamente.
@@ -127,8 +133,8 @@ paths:
     post:
       tags: [Usuarios]
       operationId: requestPasswordReset
-      summary: Solicitar un enlace de recuperación por correo
-      description: Si el correo está registrado, se envía un enlace de un solo uso que vence en 30 minutos.
+      summary: Solicitar un enlace y un código de recuperación por correo
+      description: Si el correo está registrado, se envían un enlace y un código de seis dígitos que vencen en 30 minutos. Completar el cambio por cualquiera de los dos invalida ambos y desbloquea la cuenta. Se puede solicitar un nuevo correo cada dos minutos.
       requestBody:
         required: true
         content:
@@ -157,19 +163,36 @@ paths:
     post:
       tags: [Usuarios]
       operationId: resetPassword
-      summary: Guardar la contraseña nueva mediante el token de recuperación
+      summary: Guardar la contraseña nueva mediante el enlace o el código de recuperación
+      description: Envía el token del enlace o el correo con el código de seis dígitos como texto. Cada código admite cinco intentos. El enlace del correo también permite completar la recuperación si se agotan los intentos del código.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [token, password]
+              required: [password]
+              oneOf:
+                - required: [token]
+                  not:
+                    required: [codigo]
+                - required: [email, codigo]
+                  not:
+                    required: [token]
               properties:
                 token:
                   type: string
                   minLength: 64
                   maxLength: 64
+                  pattern: '^[a-f0-9]{64}$'
+                email:
+                  type: string
+                  format: email
+                  example: usuario@example.com
+                codigo:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+                  example: '012345'
                 password:
                   type: string
                   format: password
@@ -180,6 +203,8 @@ paths:
           $ref: '#/components/responses/Ok'
         "400":
           $ref: '#/components/responses/BadRequest'
+        "503":
+          description: Recuperación por código sin configurar
 
   /api/usuarios:
     post:
@@ -348,6 +373,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           description: La cuenta no corresponde a la sesión o falta una contraseña actual válida para el cambio solicitado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        "423":
+          description: Si la cuenta agotó sus intentos de inicio de sesión, el cambio de contraseña requiere la recuperación por correo.
           content:
             application/json:
               schema:

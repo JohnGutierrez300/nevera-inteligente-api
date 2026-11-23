@@ -106,6 +106,12 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
   const username = field(auth, 'nombre');
   const lockNotice = byId('login-lock');
   const lockTime = byId('login-lock-time');
+  const lastAttemptNotice = byId('login-last-attempt');
+  const recoveryLockNotice = byId('login-recovery-lock');
+  const forgotEmail = field(forgotForm, 'email');
+  const resetEmail = field(resetForm, 'email');
+  const resetCode = field(resetForm, 'codigo');
+  const requestNew = byId('reset-request-new');
   const password = field(auth, 'password');
   const resetPassword = field(resetForm, 'password');
   const resetConfirmation = field(resetForm, 'confirmation');
@@ -120,15 +126,19 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
   function updateLoginLock() {
     clearTimeout(lockTimer);
     const name = username.value;
-    const seconds = Math.ceil(((loginLocks.get(name) ?? 0) - performance.now()) / 1000);
-    if (seconds <= 0) loginLocks.delete(name);
-    const locked = seconds > 0 && !registering && !auth.hidden && !login.hidden;
-    lockNotice.hidden = !locked;
-    if (locked) {
+    const lock = loginLocks.get(name);
+    const seconds = Math.ceil(((lock?.deadline ?? 0) - performance.now()) / 1000);
+    const visible = !registering && !auth.hidden && !login.hidden;
+    const requiresRecovery = visible && lock?.requiresRecovery === true;
+    const waiting = visible && seconds > 0;
+    lastAttemptNotice.hidden = !visible || waiting || requiresRecovery || !lock?.lastAttempt;
+    recoveryLockNotice.hidden = !requiresRecovery;
+    lockNotice.hidden = !waiting;
+    if (waiting) {
       lockTime.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
       lockTimer = setTimeout(updateAuthSubmit, 1000);
     }
-    return locked;
+    return waiting || (requiresRecovery && !password.value);
   }
 
   function setRegistration(active) {
@@ -153,8 +163,20 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
       if (candidate.hidden) maskPasswords(candidate);
     }
     updateAuthSubmit();
-    if (focus) form.querySelector('input').focus();
+    if (focus) form.querySelector('input:enabled').focus();
     notice();
+  }
+
+  function showPasswordReset(email) {
+    const useCode = email !== undefined;
+    resetForm.reset();
+    byId('reset-code-fields').hidden = !useCode;
+    resetEmail.disabled = !useCode;
+    resetCode.disabled = !useCode;
+    requestNew.hidden = !useCode;
+    if (useCode) resetEmail.value = email;
+    select('reset', !email);
+    if (email) resetCode.focus();
   }
 
   bindPasswords(auth);
@@ -179,6 +201,16 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
     password.value = '';
     select('forgot');
   });
+  byId('reset-use-code').addEventListener('click', () => {
+    onBack();
+    showPasswordReset(forgotEmail.value.trim());
+  });
+  requestNew.addEventListener('click', () => {
+    onBack();
+    forgotEmail.value = resetEmail.value;
+    resetForm.reset();
+    select('forgot');
+  });
   for (const button of document.querySelectorAll('[data-auth-back]')) {
     button.addEventListener('click', () => {
       onBack();
@@ -191,12 +223,23 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
   return {
     select,
     setRegistration,
-    blockLogin(name, seconds) {
+    showPasswordReset,
+    blockLogin(name, seconds, lastAttempt = false) {
       const now = performance.now();
-      for (const [key, deadline] of loginLocks) {
-        if (deadline <= now) loginLocks.delete(key);
+      for (const [key, lock] of loginLocks) {
+        if (lock.deadline <= now && !lock.lastAttempt) loginLocks.delete(key);
       }
-      loginLocks.set(name, now + seconds * 1000);
+      loginLocks.set(name, {
+        deadline: now + seconds * 1000, lastAttempt: lastAttempt || loginLocks.get(name)?.lastAttempt
+      });
+      updateAuthSubmit();
+    },
+    requireRecovery(name) {
+      loginLocks.set(name, { requiresRecovery: true });
+      updateAuthSubmit();
+    },
+    clearLoginLock(name) {
+      loginLocks.delete(name);
       updateAuthSubmit();
     },
     resetPasswordForm() {

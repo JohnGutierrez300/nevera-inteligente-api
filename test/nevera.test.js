@@ -70,6 +70,21 @@ async function esperar(comprobar, mensaje) {
   assert.fail(mensaje + '\n' + salida);
 }
 
+async function leerCorreoRecuperacion(email) {
+  const raw = await esperar(() => correosEnviados.shift(), 'No se recibió el correo de recuperación de prueba.');
+  const mime = Buffer.from(raw, 'base64url').toString('utf8').replace(/=\r?\n/g, '').replace(/=3D/g, '=');
+  assert.ok(mime.includes(email));
+  const enlace = /https:\/\/nevera-prueba\.example\/app\/#restablecer=([a-f0-9]{64})/.exec(mime);
+  const codigo = /^([0-9]{6})\r?$/m.exec(mime);
+  assert.ok(enlace && codigo, 'El correo debe incluir un enlace de recuperación y un código de seis dígitos.');
+  return { token: enlace[1], codigo: codigo[1] };
+}
+
+async function contadorIngreso(db, id) {
+  const { password_hash } = await db.collection('usuarios').findOne({ _id: id });
+  return { intentos: db.collection('intentos_ingreso'), filtro: { _id: huella(`${id}:${password_hash}`) } };
+}
+
 async function detenerProceso(proceso) {
   if (!proceso || proceso.exitCode !== null || proceso.signalCode !== null) return;
   const cierre = once(proceso, 'exit');
@@ -210,7 +225,7 @@ test('El servidor publica la aplicación y los archivos de Swagger desde sus car
   assert.match(await swagger.text(), /\/api\/notificaciones\/resumen/);
 });
 
-test('El registro reserva los IDs de administrador y el ingreso limita los fallos de una cuenta', async t => {
+test('El ingreso cuenta los fallos por cuenta y deja un intento tras cinco minutos completos', async t => {
   const reservado = await api('/usuarios', { method: 'POST', body: datosCuenta(idAdminReservado) });
   assert.equal(reservado.status, 403);
   assert.match(reservado.message, /reservado/);
@@ -230,19 +245,23 @@ test('El registro reserva los IDs de administrador y el ingreso limita los fallo
   assert.equal(valido.status, 200);
   await cerrarSesion({ token: valido.data.token });
 
-  const simultaneos = await Promise.all(Array.from({ length: 6 }, (_, intento) => fallar(intento)));
-  assert.deepEqual(simultaneos.map(intento => intento.status).sort(), [401, 401, 401, 401, 429, 429]);
+  const cliente = await new MongoClient(mongoUri).connect();
+  t.after(() => cliente.close());
+  const { intentos, filtro } = await contadorIngreso(cliente.db(), id);
+  assert.equal((await fallar(0)).status, 401);
+  await intentos.updateOne(filtro, { $set: { vence: new Date(Date.now() + 30_000) } });
+  const simultaneos = await Promise.all(Array.from({ length: 5 }, (_, intento) => fallar(intento)));
+  assert.deepEqual(simultaneos.map(intento => intento.status).sort(), [401, 401, 401, 429, 429]);
   assert.ok(simultaneos.some(intento => intento.status === 429 && /intentos fallidos/.test(intento.message)));
   const limitado = await entrar({ id, password: clave });
   assert.equal(limitado.status, 429);
-  assert.ok(Number(limitado.retryAfter) > 0 && Number(limitado.retryAfter) <= 300);
+  assert.equal(limitado.data.ultimo_intento, true);
+  assert.ok(Number(limitado.retryAfter) >= 297 && Number(limitado.retryAfter) <= 300);
+  assert.equal((await intentos.findOne(filtro)).vence, undefined);
 
-  const cliente = await new MongoClient(mongoUri).connect();
-  t.after(() => cliente.close());
-  const { password_hash } = await cliente.db().collection('usuarios').findOne({ _id: id });
-  await cliente.db().collection('intentos_ingreso').updateOne({ _id: huella(`${id}:${password_hash}`) },
-    { $set: { vence: new Date(0) } });
+  await intentos.updateOne(filtro, { $set: { bloqueado_hasta: new Date(0) } });
   assert.equal((await entrar({ nombre: cuenta.nombre, password: clave })).status, 200);
+  assert.equal(await intentos.findOne(filtro), null);
 });
 
 test('Los cuerpos incompletos de productos, patrones y notificaciones devuelven 400', async () => {
@@ -611,9 +630,13 @@ async function entrar(pagina, id, direccion) {
   await pagina.locator('#dashboard').waitFor();
 }
 
-test('El login muestra la espera al quinto fallo y deja cambiar de usuario o recuperar la contraseña', { timeout: 35_000 }, async t => {
+test('El login muestra la espera y el último intento. El código por correo desbloquea la cuenta', { timeout: 55_000 }, async t => {
   const cuenta = datosCuenta('7019');
   await correcto('/usuarios', { method: 'POST', body: cuenta });
+  const sesionAnterior = await sesion(cuenta.id);
+  const cliente = await new MongoClient(mongoUri).connect();
+  t.after(() => cliente.close());
+  const { intentos, filtro } = await contadorIngreso(cliente.db(), cuenta.id);
   const navegador = await abrirNavegador(t);
   const pagina = await navegador.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   pagina.setDefaultTimeout(8000);
@@ -660,8 +683,55 @@ test('El login muestra la espera al quinto fallo y deja cambiar de usuario o rec
   assert.notEqual(await tiempo.textContent(), anterior);
   await pagina.clock.fastForward(300_000);
   assert.ok(await aviso.isHidden());
+  const ultimo = pagina.locator('#login-last-attempt');
+  await ultimo.waitFor();
   assert.equal(await enviarClave(clave), 429);
   await aviso.waitFor();
+
+  await intentos.updateOne(filtro, { $set: { bloqueado_hasta: new Date(0) } });
+  await pagina.clock.fastForward(300_000);
+  await ultimo.waitFor();
+  assert.equal(await enviarClave(otraClave), 423);
+  await pagina.locator('#login-recovery-lock').waitFor();
+  const bloqueada = await api('/usuarios/login', { method: 'POST', body: { id: cuenta.id, password: clave } });
+  assert.equal(bloqueada.status, 423);
+  assert.equal(bloqueada.retryAfter, null);
+  assert.equal((await intentos.findOne(filtro)).requiere_recuperacion, true);
+  const cambioDirecto = await api('/usuarios/' + cuenta.id, {
+    ...sesionAnterior, method: 'PUT', body: { password_actual: clave, password: otraClave }
+  });
+  assert.equal(cambioDirecto.status, 423);
+
+  await pagina.locator('#forgot-toggle').click();
+  await recuperacion.locator('input[name=email]').fill(cuenta.email);
+  await recuperacion.getByRole('button', { name: 'Enviar correo de recuperación' }).click();
+  const formulario = pagina.locator('#reset-form');
+  const codigoWeb = formulario.getByLabel('Código de 6 dígitos');
+  await codigoWeb.waitFor();
+  await formulario.getByRole('button', { name: 'Volver al inicio de sesión' }).click();
+  await pagina.locator('#forgot-toggle').click();
+  await recuperacion.getByRole('button', { name: 'Ya tengo un código' }).click();
+  await codigoWeb.waitFor();
+  assert.equal(await formulario.locator('input[name=email]').inputValue(), cuenta.email);
+  const { token, codigo } = await leerCorreoRecuperacion(cuenta.email);
+  const guardado = await cliente.db().collection('usuarios').findOne({ _id: cuenta.id });
+  assert.match(guardado.recuperacion_codigo_hash, /^[a-f0-9]{64}$/);
+  await codigoWeb.fill(codigo === '012345' ? '012346' : '012345');
+  await formulario.locator('input[name=password]').fill(otraClave);
+  await formulario.locator('input[name=confirmation]').fill(otraClave);
+  const guardar = formulario.getByRole('button', { name: 'Guardar contraseña' });
+  await guardar.click();
+  await pagina.getByText(/El código es incorrecto/).waitFor();
+  await codigoWeb.fill(codigo);
+  await guardar.click();
+  await pagina.getByText('Contraseña actualizada. Ya puedes iniciar sesión.', { exact: true }).waitFor();
+  assert.equal(await intentos.findOne(filtro), null);
+  assert.equal((await api('/usuarios/me', sesionAnterior)).status, 401);
+  const repetir = campos => api('/usuarios/restablecer-contrasena', { method: 'POST', body: { ...campos, password: clave } });
+  assert.equal((await repetir({ token })).status, 400);
+  assert.equal((await repetir({ email: cuenta.email, codigo })).status, 400);
+  assert.equal(await enviarClave(otraClave), 200);
+  await pagina.locator('#dashboard').waitFor();
 });
 
 test('El registro muestra y valida cada requisito de contraseña mientras se escribe', { timeout: 35_000 }, async t => {
@@ -1092,8 +1162,8 @@ test('El enlace de recuperación enviado por Gmail permite cambiar la contraseñ
   await pagina.goto(baseUrl + '/app/');
   await pagina.locator('#forgot-toggle').click();
   await pagina.locator('#forgot-form input[name=email]').fill(cuenta.email);
-  await pagina.getByRole('button', { name: 'Solicitar enlace', exact: true }).click();
-  const aviso = 'Si el correo está registrado, recibirás un enlace de recuperación.';
+  await pagina.getByRole('button', { name: 'Enviar correo de recuperación', exact: true }).click();
+  const aviso = 'Si el correo está registrado, recibirás un enlace y un código de recuperación.';
   await pagina.getByText(aviso, { exact: true }).waitFor();
   const desconocido = await api('/usuarios/recuperar-contrasena', {
     method: 'POST', body: { email: 'no-registrado@example.test' }
@@ -1101,12 +1171,14 @@ test('El enlace de recuperación enviado por Gmail permite cambiar la contraseñ
   assert.equal(desconocido.status, 202);
   assert.equal(desconocido.message, aviso);
 
-  const raw = await esperar(() => correosEnviados.shift(), 'No se recibió el correo de recuperación de prueba.');
-  const mime = Buffer.from(raw, 'base64url').toString('utf8').replace(/=\r?\n/g, '').replace(/=3D/g, '=');
-  assert.ok(mime.includes(cuenta.email));
-  const coincidencia = /https:\/\/nevera-prueba\.example\/app\/#restablecer=([a-f0-9]{64})/.exec(mime);
-  assert.ok(coincidencia, 'El correo debe incluir un enlace de recuperación público.');
-  const [, token] = coincidencia;
+  const { token, codigo } = await leerCorreoRecuperacion(cuenta.email);
+  const intentarCodigo = codigo => api('/usuarios/restablecer-contrasena', {
+    method: 'POST', body: { email: cuenta.email, codigo, password }
+  });
+  const incorrecto = codigo === '000000' ? '000001' : '000000';
+  const fallidos = await Promise.all(Array.from({ length: 5 }, () => intentarCodigo(incorrecto)));
+  assert.ok(fallidos.every(respuesta => respuesta.status === 400));
+  assert.equal((await intentarCodigo(codigo)).status, 400);
   await pagina.goto(baseUrl + '/app/#restablecer=' + token);
   const formulario = pagina.locator('#reset-form');
   const reglas = formulario.locator('#reset-password-rules');
@@ -1115,6 +1187,7 @@ test('El enlace de recuperación enviado por Gmail permite cambiar la contraseñ
   const confirmarClave = formulario.locator('input[name=confirmation]');
   const indicadorCoincidencia = reglas.locator('[data-password-rule="confirmation"] .password-requirement-icon');
   await reglas.waitFor();
+  assert.ok(await formulario.getByLabel('Código de 6 dígitos').isHidden());
   assert.ok(await reglas.getByText('Las contraseñas deben coincidir.').isVisible());
   assert.equal(await reglas.locator('[data-length-label]').textContent(), 'Al menos 12 caracteres');
   assert.equal(await reglas.locator('.is-met').count(), 0);
@@ -1148,6 +1221,40 @@ test('El enlace de recuperación enviado por Gmail permite cambiar la contraseñ
   assert.equal(repetido.status, 400);
   assert.equal((await api('/usuarios/login', { method: 'POST', body: { id, password: clave } })).status, 401);
   await correcto('/usuarios/login', { method: 'POST', body: { id, password } });
+});
+
+test('El enlace y el código vencen juntos y solo uno puede restablecer la contraseña en simultáneo', async t => {
+  const cuenta = datosCuenta('7020');
+  await correcto('/usuarios', { method: 'POST', body: cuenta });
+  const ingresar = password => api('/usuarios/login', { method: 'POST', body: { id: cuenta.id, password } });
+  for (let intento = 1; intento <= 5; intento++) {
+    assert.equal((await ingresar(otraClave)).status, intento === 5 ? 429 : 401);
+  }
+
+  const respuesta = await api('/usuarios/recuperar-contrasena', { method: 'POST', body: { email: cuenta.email } });
+  assert.equal(respuesta.status, 202);
+  assert.equal(respuesta.data, null);
+  const { token, codigo } = await leerCorreoRecuperacion(cuenta.email);
+  const cliente = await new MongoClient(mongoUri).connect();
+  t.after(() => cliente.close());
+  const usuarios = cliente.db().collection('usuarios');
+  const filtro = { _id: cuenta.id };
+  const { recuperacion_vence } = await usuarios.findOne(filtro);
+  const restablecer = (campos, password) => api('/usuarios/restablecer-contrasena', {
+    method: 'POST', body: { ...campos, password }
+  });
+  const porEnlace = { token };
+  const porCodigo = { email: cuenta.email, codigo };
+  await usuarios.updateOne(filtro, { $set: { recuperacion_vence: new Date(0) } });
+  assert.equal((await restablecer(porEnlace, otraClave)).status, 400);
+  assert.equal((await restablecer(porCodigo, otraClave)).status, 400);
+  await usuarios.updateOne(filtro, { $set: { recuperacion_vence } });
+
+  const claves = [otraClave, 'NuevaNevera2036!'];
+  const resultados = await Promise.all([restablecer(porEnlace, claves[0]), restablecer(porCodigo, claves[1])]);
+  assert.deepEqual(resultados.map(resultado => resultado.status).sort(), [200, 400]);
+  const ganador = resultados.findIndex(resultado => resultado.status === 200);
+  assert.equal((await ingresar(claves[ganador])).status, 200);
 });
 
 test('La ruta de salud detecta cuando MongoDB deja de responder', { timeout: 35_000 }, async () => {

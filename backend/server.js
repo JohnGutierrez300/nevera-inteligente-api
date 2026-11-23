@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const YAML = require('yamljs');
-const { randomBytes, randomInt, randomUUID } = require('node:crypto');
+const { createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { huella, protegerClave, verificarClave } = require('./credenciales');
 const { configurarCorreo, enviarCorreoRecuperacion } = require('./correo-recuperacion');
@@ -173,6 +173,8 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password_hash: { type: String, required: true, select: false },
   recuperacion_hash: { type: String, select: false, unique: true, sparse: true },
+  recuperacion_codigo_hash: { type: String, select: false },
+  recuperacion_codigo_intentos: { type: Number, select: false },
   recuperacion_vence: { type: Date, select: false },
   recuperacion_solicitada: { type: Date, select: false },
   revision_notificaciones: { type: Number, select: false }
@@ -197,7 +199,10 @@ const IntentoIngreso = mongoose.model('IntentoIngreso', new mongoose.Schema({
   intentos: Number,
   fallidos: Number,
   ventana: String,
-  vence: { type: Date, expires: 0 }
+  vence: { type: Date, expires: 0 },
+  bloqueado_hasta: Date,
+  ultimo_intento_vence: Date,
+  requiere_recuperacion: Boolean
 }, { collection: 'intentos_ingreso', versionKey: false }));
 
 const BloqueoMutaciones = mongoose.model('BloqueoMutaciones', new mongoose.Schema({
@@ -291,6 +296,8 @@ const DURACION_SESION_WEB_MS = 30 * DURACION_SESION_MS;
 const INACTIVIDAD_SESION_MS = 7 * 60 * 1000;
 const LIMITE_INTENTOS_INGRESO = 5;
 const VENTANA_INGRESO_MS = 5 * 60 * 1000;
+const BLOQUEO_INGRESO_MS = 5 * 60 * 1000;
+const RESERVA_ULTIMO_INTENTO_MS = 30 * 1000;
 const MENSAJE_SESION_ACTIVA = 'Esta cuenta ya tiene una sesión activa. Cierra esa sesión para iniciar otra.';
 const CLAVE_SEGURA = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,1024}$/;
 const NOMBRE_COOKIE = 'nevera_session';
@@ -453,27 +460,45 @@ function cuerpoConCampos(cuerpo, campos) {
   return cuerpo;
 }
 
-function rechazarIngreso(res, intento) {
-  const bloqueado = intento.fallidos >= LIMITE_INTENTOS_INGRESO;
-  const segundos = bloqueado ? Math.max(1, Math.ceil((intento.vence - Date.now()) / 1000)) : 1;
-  const motivo = bloqueado ? 'Demasiados intentos fallidos.' : 'Hay intentos de inicio de sesión en curso.';
+function llaveIngreso(usuario) {
+  return huella(`${usuario._id}:${usuario.password_hash}`);
+}
+
+function exigirRecuperacionIngreso() {
+  throw new ApiError(423, 'La cuenta está bloqueada. Usa «¿Olvidaste tu contraseña?» para recuperarla.');
+}
+
+function rechazarIngreso(res, bloqueadoHasta) {
+  const segundos = bloqueadoHasta ? Math.max(1, Math.ceil((bloqueadoHasta - Date.now()) / 1000)) : 1;
+  const motivo = bloqueadoHasta ? 'Demasiados intentos fallidos.' : 'Hay intentos de inicio de sesión en curso.';
   const unidad = segundos === 1 ? 'segundo' : 'segundos';
   res.set('Retry-After', String(segundos));
-  throw new ApiError(429, `${motivo} Inténtalo nuevamente en ${segundos} ${unidad}.`);
+  throw new ApiError(429, `${motivo} Inténtalo nuevamente en ${segundos} ${unidad}.`,
+    bloqueadoHasta ? { ultimo_intento: true } : null);
 }
 
 async function reservarIntentoIngreso(llave, res) {
   const ahora = new Date();
   const ventana = randomUUID();
-  const nuevaVentana = { $lte: [{ $ifNull: ['$vence', new Date(0)] }, ahora] };
   const intentos = { $ifNull: ['$intentos', 0] };
-  // Limita las verificaciones simultáneas y cuenta sus fallos cuando terminan.
-  const cambios = [{ $set: {
-    ventana: { $cond: [nuevaVentana, ventana, { $ifNull: ['$ventana', ventana] }] },
-    vence: { $cond: [nuevaVentana, new Date(ahora.getTime() + VENTANA_INGRESO_MS), '$vence'] },
-    intentos: { $cond: [nuevaVentana, 1, { $min: [{ $add: [intentos, 1] }, LIMITE_INTENTOS_INGRESO + 1] }] },
-    fallidos: { $cond: [nuevaVentana, 0, { $ifNull: ['$fallidos', intentos] }] }
-  } }];
+  const fallidos = { $ifNull: ['$fallidos', intentos] };
+  const ingresoNormal = { $eq: [{ $ifNull: ['$bloqueado_hasta', null] }, null] };
+  const nuevaVentana = { $and: [ingresoNormal, { $lte: [{ $ifNull: ['$vence', new Date(0)] }, ahora] }] };
+  const bloqueoAnterior = { $and: [ingresoNormal, { $gt: ['$vence', ahora] }, { $gte: [fallidos, LIMITE_INTENTOS_INGRESO] }] };
+  const siguienteIntento = { $min: [{ $add: [intentos, 1] }, LIMITE_INTENTOS_INGRESO + 1] };
+  const cambios = [
+    // Conserva las esperas que estaban vigentes antes de incorporar el último intento.
+    { $set: {
+      bloqueado_hasta: { $cond: [bloqueoAnterior, '$vence', '$bloqueado_hasta'] },
+      vence: { $cond: [bloqueoAnterior, '$$REMOVE', '$vence'] }
+    } },
+    { $set: {
+      ventana: { $cond: [nuevaVentana, ventana, { $ifNull: ['$ventana', ventana] }] },
+      vence: { $cond: [nuevaVentana, new Date(ahora.getTime() + VENTANA_INGRESO_MS), '$vence'] },
+      intentos: { $cond: [ingresoNormal, { $cond: [nuevaVentana, 1, siguienteIntento] }, '$intentos'] },
+      fallidos: { $cond: [nuevaVentana, 0, fallidos] }
+    } }
+  ];
   const guardar = () => IntentoIngreso.findOneAndUpdate({ _id: llave }, cambios, {
     upsert: true, returnDocument: 'after', updatePipeline: true
   }).lean();
@@ -481,8 +506,42 @@ async function reservarIntentoIngreso(llave, res) {
     if (error.code === 11000) return guardar();
     throw error;
   });
-  if (intento.intentos > LIMITE_INTENTOS_INGRESO) rechazarIngreso(res, intento);
+  if (intento.requiere_recuperacion) exigirRecuperacionIngreso();
+  if (intento.bloqueado_hasta) {
+    if (intento.bloqueado_hasta > ahora) rechazarIngreso(res, intento.bloqueado_hasta);
+    const ultimo = await IntentoIngreso.findOneAndUpdate({
+      _id: llave,
+      ventana: intento.ventana,
+      requiere_recuperacion: { $ne: true },
+      $or: [{ ultimo_intento_vence: { $exists: false } }, { ultimo_intento_vence: { $lte: ahora } }]
+    }, { $set: { ventana, ultimo_intento_vence: new Date(ahora.getTime() + RESERVA_ULTIMO_INTENTO_MS) } }, {
+      returnDocument: 'after'
+    }).lean();
+    if (!ultimo) rechazarIngreso(res);
+    return ultimo;
+  }
+  if (intento.intentos > LIMITE_INTENTOS_INGRESO) rechazarIngreso(res);
   return intento;
+}
+
+async function registrarFalloIngreso(res, registro, ultimo) {
+  if (ultimo) {
+    const cambio = await IntentoIngreso.updateOne(registro, {
+      $set: { requiere_recuperacion: true }, $unset: { ultimo_intento_vence: 1 }
+    });
+    if (cambio.matchedCount) exigirRecuperacionIngreso();
+  } else {
+    const limiteAlcanzado = { $gte: ['$fallidos', LIMITE_INTENTOS_INGRESO] };
+    const intento = await IntentoIngreso.findOneAndUpdate(registro, [
+      { $set: { fallidos: { $add: ['$fallidos', 1] } } },
+      { $set: {
+        bloqueado_hasta: { $cond: [limiteAlcanzado, new Date(Date.now() + BLOQUEO_INGRESO_MS), '$bloqueado_hasta'] },
+        vence: { $cond: [limiteAlcanzado, '$$REMOVE', '$vence'] }
+      } }
+    ], { returnDocument: 'after', updatePipeline: true }).lean();
+    if (intento?.bloqueado_hasta) rechazarIngreso(res, intento.bloqueado_hasta);
+  }
+  throw new ApiError(401, 'Credenciales inválidas');
 }
 
 // ==========================================
@@ -567,18 +626,13 @@ app.post('/api/usuarios/login', async (req, res) => {
     ? await Usuario.findOne(filtro).select('+password_hash')
     : null;
   if (typeof usuario?.password_hash !== 'string') throw new ApiError(401, 'Credenciales inválidas');
-  const llaveIntento = huella(`${usuario._id}:${usuario.password_hash}`);
+  const llaveIntento = llaveIngreso(usuario);
   const intento = await reservarIntentoIngreso(llaveIntento, res);
   const registroIntento = { _id: llaveIntento, ventana: intento.ventana };
   const resultado = await verificarClave(clave, usuario.password_hash);
-  if (!resultado.valida) {
-    const registro = await IntentoIngreso.findOneAndUpdate(registroIntento, { $inc: { fallidos: 1 } }, {
-      returnDocument: 'after'
-    }).lean();
-    if (registro?.fallidos >= LIMITE_INTENTOS_INGRESO) rechazarIngreso(res, registro);
-    throw new ApiError(401, 'Credenciales inválidas');
-  }
-  await IntentoIngreso.deleteOne(registroIntento);
+  if (!resultado.valida) return registrarFalloIngreso(res, registroIntento, Boolean(intento.bloqueado_hasta));
+  const reinicio = await IntentoIngreso.deleteOne(registroIntento);
+  if (intento.bloqueado_hasta && !reinicio.deletedCount) throw new ApiError(401, 'Vuelve a iniciar sesión');
 
   if (resultado.anterior) {
     const hash = await protegerClave(clave);
@@ -627,12 +681,21 @@ app.post('/api/usuarios/login', async (req, res) => {
 
 const RECUPERACION_DURACION_MS = 30 * 60 * 1000;
 const RECUPERACION_ESPERA_MS = 2 * 60 * 1000;
-const CAMPOS_ENLACE_RECUPERACION = { recuperacion_hash: 1, recuperacion_vence: 1 };
+const LIMITE_INTENTOS_CODIGO = 5;
+const CAMPOS_RECUPERACION = {
+  recuperacion_hash: 1, recuperacion_vence: 1, recuperacion_codigo_hash: 1, recuperacion_codigo_intentos: 1
+};
 const correoValido = email => typeof email === 'string' && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+function huellaCodigoRecuperacion(configuracion, solicitud, codigo) {
+  const secreto = configuracion.oauth?.refresh_token ?? configuracion.clave;
+  return createHmac('sha256', secreto).update(`nevera-codigo-recuperacion:${solicitud}:${codigo}`).digest();
+}
 
 async function enviarRecuperacion(email, configuracion) {
   const token = randomBytes(32).toString('hex');
   const hash = huella(token);
+  const codigo = String(randomInt(1_000_000)).padStart(6, '0');
   const ahora = Date.now();
   const usuario = await Usuario.findOneAndUpdate({
     email,
@@ -642,6 +705,8 @@ async function enviarRecuperacion(email, configuracion) {
     ]
   }, { $set: {
     recuperacion_hash: hash,
+    recuperacion_codigo_hash: huellaCodigoRecuperacion(configuracion, hash, codigo).toString('hex'),
+    recuperacion_codigo_intentos: 0,
     recuperacion_vence: new Date(ahora + RECUPERACION_DURACION_MS),
     recuperacion_solicitada: new Date(ahora)
   } }).select('email').lean();
@@ -649,10 +714,10 @@ async function enviarRecuperacion(email, configuracion) {
 
   configuracion.enlace.hash = new URLSearchParams({ restablecer: token }).toString();
   try {
-    await enviarCorreoRecuperacion(configuracion, usuario.email, configuracion.enlace.href);
+    await enviarCorreoRecuperacion(configuracion, usuario.email, configuracion.enlace.href, codigo);
   } catch (error) {
     await Usuario.updateOne({ _id: usuario._id, recuperacion_hash: hash }, {
-      $unset: CAMPOS_ENLACE_RECUPERACION
+      $unset: CAMPOS_RECUPERACION
     });
     throw error;
   }
@@ -670,29 +735,54 @@ app.post('/api/usuarios/recuperar-contrasena', (req, res) => {
     console.error('No se pudo procesar un correo de recuperación.', codigo);
   });
   res.set('Cache-Control', 'no-store');
-  res.status(202).json(responseFormat(true, 'Si el correo está registrado, recibirás un enlace de recuperación.'));
+  res.status(202).json(responseFormat(true, 'Si el correo está registrado, recibirás un enlace y un código de recuperación.'));
 });
 
 app.post('/api/usuarios/restablecer-contrasena', async (req, res) => {
-  const { token, password } = req.body ?? {};
-  const mensajeEnlace = 'El enlace venció o ya fue usado. Solicita uno nuevo.';
-  if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new ApiError(400, mensajeEnlace);
+  res.set('Cache-Control', 'no-store');
+  const { token, codigo, password } = req.body ?? {};
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+  const porEnlace = token !== undefined;
+  const mensaje = porEnlace ? 'El enlace venció o ya fue usado. Solicita uno nuevo.'
+    : 'El código es incorrecto, venció o agotó sus intentos. Usa el enlace del correo o solicita uno nuevo.';
+  if (porEnlace && codigo !== undefined) throw new ApiError(400, 'Usa el enlace o el código de recuperación.');
+  if (porEnlace && (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token))) throw new ApiError(400, mensaje);
+  if (!porEnlace && (!correoValido(email) || typeof codigo !== 'string' || !/^[0-9]{6}$/.test(codigo))) {
+    throw new ApiError(400, 'Ingresa el correo de tu cuenta y el código de 6 dígitos.');
+  }
   if (typeof password !== 'string' || !CLAVE_SEGURA.test(password)) {
     throw new ApiError(400, 'Usa entre 12 y 1024 caracteres, con mayúsculas, minúsculas, números y símbolos.');
   }
 
-  const hash = huella(token);
-  const usuario = await Usuario.exists({ recuperacion_hash: hash, recuperacion_vence: { $gt: new Date() } });
-  if (!usuario) throw new ApiError(400, mensajeEnlace);
-  const passwordHash = await protegerClave(password);
-  const cambio = await Usuario.updateOne({
-    _id: usuario._id,
-    recuperacion_hash: hash,
-    recuperacion_vence: { $gt: new Date() }
-  }, { $set: { password_hash: passwordHash }, $unset: CAMPOS_ENLACE_RECUPERACION });
-  if (!cambio.matchedCount) throw new ApiError(400, mensajeEnlace);
+  const vigente = { recuperacion_vence: { $gt: new Date() } };
+  const seleccion = '+password_hash +recuperacion_hash +recuperacion_codigo_hash';
+  const configuracion = porEnlace ? null : configurarCorreo();
+  if (!porEnlace && !configuracion) throw new ApiError(503, 'La recuperación por código no está disponible. Usa el enlace del correo.');
+  const usuario = porEnlace
+    ? await Usuario.findOne({ ...vigente, recuperacion_hash: huella(token) }).select(seleccion).lean()
+    : await Usuario.findOneAndUpdate({
+      ...vigente, email, recuperacion_codigo_hash: { $type: 'string' },
+      recuperacion_codigo_intentos: { $lt: LIMITE_INTENTOS_CODIGO }
+    }, { $inc: { recuperacion_codigo_intentos: 1 } }).select(seleccion).lean();
+  if (!usuario) throw new ApiError(400, mensaje);
+  if (!porEnlace) {
+    const guardada = Buffer.from(usuario.recuperacion_codigo_hash, 'hex');
+    const ingresada = huellaCodigoRecuperacion(configuracion, usuario.recuperacion_hash, codigo);
+    if (guardada.length !== ingresada.length || !timingSafeEqual(guardada, ingresada)) throw new ApiError(400, mensaje);
+  }
 
-  res.set('Cache-Control', 'no-store');
+  const passwordHash = await protegerClave(password);
+  await mongoose.connection.transaction(async () => {
+    const cambio = await Usuario.updateOne({
+      _id: usuario._id,
+      password_hash: usuario.password_hash,
+      recuperacion_hash: usuario.recuperacion_hash,
+      recuperacion_vence: { $gt: new Date() }
+    }, { $set: { password_hash: passwordHash }, $unset: CAMPOS_RECUPERACION });
+    if (!cambio.matchedCount) throw new ApiError(400, mensaje);
+    await IntentoIngreso.deleteOne({ _id: llaveIngreso(usuario) });
+  });
+
   res.status(200).json(responseFormat(true, 'Contraseña actualizada. Ya puedes iniciar sesión.'));
 });
 
@@ -894,11 +984,19 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
       return res.status(200).json(responseFormat(true, 'Perfil obtenido', usuarioPublico(req.usuario)));
     }
     const cambios = { $set: datosActualizados };
-    if (cambiaCredenciales) cambios.$unset = CAMPOS_ENLACE_RECUPERACION;
+    if (cambiaCredenciales) cambios.$unset = CAMPOS_RECUPERACION;
     const filtro = { _id: usuarioId };
     if (cambiaCredenciales) filtro.password_hash = req.usuario.password_hash;
-    const usuarioActualizado = await Usuario.findOneAndUpdate(filtro, cambios, { returnDocument: 'after', runValidators: true });
-    if (!usuarioActualizado) throw new ApiError(401, 'La sesión cambió. Vuelve a iniciar sesión.');
+    const actualizar = async () => {
+      const usuario = await Usuario.findOneAndUpdate(filtro, cambios, { returnDocument: 'after', runValidators: true });
+      if (!usuario) throw new ApiError(401, 'La sesión cambió. Vuelve a iniciar sesión.');
+      return usuario;
+    };
+    const usuarioActualizado = clave === undefined ? await actualizar() : await mongoose.connection.transaction(async () => {
+      const intento = await IntentoIngreso.findOneAndDelete({ _id: llaveIngreso(req.usuario) }).lean();
+      if (intento?.requiere_recuperacion) exigirRecuperacionIngreso();
+      return actualizar();
+    });
     if (req.sesionWeb && clave !== undefined) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
     res.status(200).json(responseFormat(true, 'Usuario actualizado exitosamente', usuarioPublico(usuarioActualizado)));
   } catch (error) {
@@ -912,6 +1010,7 @@ mutacion('delete', '/api/usuarios/:id', async req => {
   const usuarioEliminado = await eliminarPorId(Usuario, req.params.id);
   await IdUsuarioRetirado.updateOne({ _id: usuarioEliminado._id }, { $setOnInsert: { _id: usuarioEliminado._id } }, { upsert: true });
   await Sesion.deleteMany({ usuario: req.usuarioId });
+  await IntentoIngreso.deleteOne({ _id: llaveIngreso(req.usuario) });
   return responseFormat(true, 'Usuario eliminado exitosamente', usuarioEliminado);
 });
 

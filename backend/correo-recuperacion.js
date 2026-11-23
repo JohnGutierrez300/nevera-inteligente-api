@@ -62,15 +62,17 @@ async function enviarPorApi(mensaje, oauth) {
   if (!respuesta.ok) throw errorGmail('GMAIL_ENVIO_' + respuesta.status);
 }
 
-async function enviarCorreoRecuperacion(configuracion, email, enlace) {
+async function enviarCorreoRecuperacion(configuracion, email, enlace, codigo) {
   const mensaje = {
     from: { name: 'Nevera Inteligente', address: configuracion.remitente },
     to: { address: email, name: '' },
     subject: 'Restablece tu contraseña de Nevera Inteligente',
     text: [
-      'Abre este enlace para elegir una contraseña nueva:',
+      'Abre el siguiente enlace para elegir una contraseña nueva.',
       enlace,
-      'El enlace vence en 30 minutos y solo se puede usar una vez.',
+      'También puedes escribir este código de 6 dígitos en la página de recuperación de Nevera Inteligente.',
+      codigo,
+      'El enlace y el código vencen en 30 minutos. Solo puedes completar el cambio una vez.',
       'Si no solicitaste el cambio, puedes ignorar este correo.'
     ].join('\n\n')
   };

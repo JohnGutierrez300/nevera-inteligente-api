@@ -67,6 +67,12 @@
         <div class="form-error" id="login-lock" role="status" hidden>
           Demasiados intentos de inicio de sesión. Vuelve a intentarlo en <span id="login-lock-time" role="timer"></span>.
         </div>
+        <div class="form-error" id="login-last-attempt" role="status" hidden>
+          Te queda un intento. Si vuelves a fallar, tendrás que recuperar tu contraseña por correo.
+        </div>
+        <div class="form-error" id="login-recovery-lock" role="status" hidden>
+          Tu cuenta está bloqueada. Usa «¿Olvidaste tu contraseña?» para recuperarla.
+        </div>
         <button class="primary" id="auth-submit">Entrar</button>
         <button class="text-button" id="forgot-toggle" type="button">¿Olvidaste tu contraseña?</button>
         <button class="text-button" id="register-toggle" type="button">Crear una cuenta</button>
@@ -74,15 +80,21 @@
       <form id="forgot-form" class="panel" hidden>
         <h2>Recuperar contraseña</h2>
         <label>Correo de tu cuenta<input name="email" type="email" maxlength="254" autocomplete="email" required></label>
-        <button class="primary" type="submit">Solicitar enlace</button>
+        <button class="primary" type="submit">Enviar correo de recuperación</button>
+        <button class="text-button" id="reset-use-code" type="button">Ya tengo un código</button>
         <button class="text-button" type="button" data-auth-back>Volver al inicio de sesión</button>
       </form>
       <form id="reset-form" class="panel" hidden>
         <h2>Elige una contraseña nueva</h2>
+        <div id="reset-code-fields" hidden>
+          <label>Correo de tu cuenta<input name="email" type="email" maxlength="254" autocomplete="email" required disabled></label>
+          <label>Código de 6 dígitos<input name="codigo" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code" required disabled></label>
+        </div>
         <label>Contraseña nueva<input name="password" type="password" autocomplete="new-password" required></label>
         <div class="password-requirements" id="reset-password-rules"></div>
         <label>Confirma la contraseña<input name="confirmation" type="password" autocomplete="new-password" required></label>
         <button class="primary" type="submit">Guardar contraseña</button>
+        <button class="text-button" id="reset-request-new" type="button" hidden>Solicitar otro correo</button>
         <button class="text-button" type="button" data-auth-back>Volver al inicio de sesión</button>
       </form>
     </section>

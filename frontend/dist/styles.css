@@ -738,7 +738,7 @@ button:active:not(:disabled) {
   background: #fae9e7;
 }
 
-#login-lock { margin-bottom: .65rem; font-size: .9rem; }
+#login-lock, #login-last-attempt, #login-recovery-lock { margin-bottom: .65rem; font-size: .9rem; }
 
 .panel-content {
   display: grid;
