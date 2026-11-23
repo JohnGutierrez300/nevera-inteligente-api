@@ -58,7 +58,7 @@ paths:
       tags: [Usuarios]
       operationId: loginUser
       summary: Iniciar sesión web u obtener un token Bearer
-      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger. Cada cuenta admite una sesión activa. La sesión vence tras 7 minutos sin actividad. El navegador que ya tiene la cookie válida puede continuar con la misma sesión. Tras cinco intentos fallidos de una cuenta, espera a que termine su ventana de cinco minutos.
+      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger. Cada cuenta admite una sesión activa. La sesión vence tras 7 minutos sin actividad. El navegador que ya tiene la cookie válida puede continuar con la misma sesión. El quinto fallo bloquea el ingreso de esa cuenta hasta que termine la ventana de cinco minutos iniciada con el primer intento. Una contraseña correcta antes del bloqueo reinicia el contador.
       requestBody:
         required: true
         content:
@@ -111,7 +111,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "429":
-          description: Se alcanzó el límite de intentos para esta cuenta.
+          description: La cuenta alcanzó cinco intentos fallidos o hay verificaciones de contraseña en curso. Espera el tiempo indicado en Retry-After.
           headers:
             Retry-After:
               description: Segundos antes de intentar nuevamente.

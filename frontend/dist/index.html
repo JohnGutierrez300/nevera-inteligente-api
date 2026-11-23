@@ -64,6 +64,9 @@
         </div>
         <label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label>
         <div class="password-requirements" id="registration-password-rules" hidden></div>
+        <div class="form-error" id="login-lock" role="status" hidden>
+          Demasiados intentos de inicio de sesión. Vuelve a intentarlo en <span id="login-lock-time" role="timer"></span>.
+        </div>
         <button class="primary" id="auth-submit">Entrar</button>
         <button class="text-button" id="forgot-toggle" type="button">¿Olvidaste tu contraseña?</button>
         <button class="text-button" id="register-toggle" type="button">Crear una cuenta</button>

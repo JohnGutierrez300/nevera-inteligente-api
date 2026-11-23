@@ -195,6 +195,8 @@ Sesion.schema.index({ usuario: 1, credencial: 1, vence: -1, _id: 1 });
 const IntentoIngreso = mongoose.model('IntentoIngreso', new mongoose.Schema({
   _id: String,
   intentos: Number,
+  fallidos: Number,
+  ventana: String,
   vence: { type: Date, expires: 0 }
 }, { collection: 'intentos_ingreso', versionKey: false }));
 
@@ -451,25 +453,35 @@ function cuerpoConCampos(cuerpo, campos) {
   return cuerpo;
 }
 
-async function reservarIntentoIngreso(usuarioId, res) {
+function rechazarIngreso(res, intento) {
+  const bloqueado = intento.fallidos >= LIMITE_INTENTOS_INGRESO;
+  const segundos = bloqueado ? Math.max(1, Math.ceil((intento.vence - Date.now()) / 1000)) : 1;
+  const motivo = bloqueado ? 'Demasiados intentos fallidos.' : 'Hay intentos de inicio de sesión en curso.';
+  const unidad = segundos === 1 ? 'segundo' : 'segundos';
+  res.set('Retry-After', String(segundos));
+  throw new ApiError(429, `${motivo} Inténtalo nuevamente en ${segundos} ${unidad}.`);
+}
+
+async function reservarIntentoIngreso(llave, res) {
   const ahora = new Date();
+  const ventana = randomUUID();
   const nuevaVentana = { $lte: [{ $ifNull: ['$vence', new Date(0)] }, ahora] };
+  const intentos = { $ifNull: ['$intentos', 0] };
+  // Limita las verificaciones simultáneas y cuenta sus fallos cuando terminan.
   const cambios = [{ $set: {
+    ventana: { $cond: [nuevaVentana, ventana, { $ifNull: ['$ventana', ventana] }] },
     vence: { $cond: [nuevaVentana, new Date(ahora.getTime() + VENTANA_INGRESO_MS), '$vence'] },
-    intentos: { $cond: [nuevaVentana, 1, { $min: [{ $add: ['$intentos', 1] }, LIMITE_INTENTOS_INGRESO + 1] }] }
+    intentos: { $cond: [nuevaVentana, 1, { $min: [{ $add: [intentos, 1] }, LIMITE_INTENTOS_INGRESO + 1] }] },
+    fallidos: { $cond: [nuevaVentana, 0, { $ifNull: ['$fallidos', intentos] }] }
   } }];
-  const guardar = () => IntentoIngreso.findOneAndUpdate({ _id: usuarioId }, cambios, {
+  const guardar = () => IntentoIngreso.findOneAndUpdate({ _id: llave }, cambios, {
     upsert: true, returnDocument: 'after', updatePipeline: true
   }).lean();
   const intento = await guardar().catch(error => {
     if (error.code === 11000) return guardar();
     throw error;
   });
-  if (intento.intentos > LIMITE_INTENTOS_INGRESO) {
-    const segundos = Math.max(1, Math.ceil((intento.vence - ahora) / 1000));
-    res.set('Retry-After', String(segundos));
-    throw new ApiError(429, `Demasiados intentos de inicio de sesión. Inténtalo nuevamente en ${segundos} segundos.`);
-  }
+  if (intento.intentos > LIMITE_INTENTOS_INGRESO) rechazarIngreso(res, intento);
   return intento;
 }
 
@@ -544,6 +556,7 @@ app.get('/api/validaciones/:coleccion/:id', async (req, res, next) => {
 // ==========================================
 
 app.post('/api/usuarios/login', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const { id, nombre, password, password_hash, sesion_web } = req.body ?? {};
   if (sesion_web === true) exigirOrigenWeb(req);
   const clave = password ?? password_hash;
@@ -556,9 +569,16 @@ app.post('/api/usuarios/login', async (req, res) => {
   if (typeof usuario?.password_hash !== 'string') throw new ApiError(401, 'Credenciales inválidas');
   const llaveIntento = huella(`${usuario._id}:${usuario.password_hash}`);
   const intento = await reservarIntentoIngreso(llaveIntento, res);
+  const registroIntento = { _id: llaveIntento, ventana: intento.ventana };
   const resultado = await verificarClave(clave, usuario.password_hash);
-  if (!resultado.valida) throw new ApiError(401, 'Credenciales inválidas');
-  await IntentoIngreso.deleteOne({ _id: llaveIntento, vence: intento.vence });
+  if (!resultado.valida) {
+    const registro = await IntentoIngreso.findOneAndUpdate(registroIntento, { $inc: { fallidos: 1 } }, {
+      returnDocument: 'after'
+    }).lean();
+    if (registro?.fallidos >= LIMITE_INTENTOS_INGRESO) rechazarIngreso(res, registro);
+    throw new ApiError(401, 'Credenciales inválidas');
+  }
+  await IntentoIngreso.deleteOne(registroIntento);
 
   if (resultado.anterior) {
     const hash = await protegerClave(clave);
@@ -598,7 +618,6 @@ app.post('/api/usuarios/login', async (req, res) => {
   });
   if (!sesion) throw new ApiError(401, 'Vuelve a iniciar sesión');
   const datos = { vence: sesion.vence, inactividad_restante_ms: tiempoRestanteSesion(sesion) };
-  res.set('Cache-Control', 'no-store');
   if (web) {
     escribirCookieSesion(req, res, token, sesion.vence);
     return res.status(200).json(responseFormat(true, 'Sesión iniciada', { perfil: perfilWeb(usuario), ...datos }));

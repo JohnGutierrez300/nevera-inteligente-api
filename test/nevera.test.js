@@ -219,10 +219,20 @@ test('El registro reserva los IDs de administrador y el ingreso limita los fallo
   const cuenta = datosCuenta(id);
   await correcto('/usuarios', { method: 'POST', body: cuenta });
   const entrar = body => api('/usuarios/login', { method: 'POST', body });
-  for (let intento = 0; intento < 5; intento++) {
+  const fallar = intento => {
     const identificador = intento % 2 ? { id } : { nombre: cuenta.nombre };
-    assert.equal((await entrar({ ...identificador, password: otraClave })).status, 401);
+    return entrar({ ...identificador, password: otraClave });
+  };
+  for (let intento = 0; intento < 4; intento++) {
+    assert.equal((await fallar(intento)).status, 401);
   }
+  const valido = await entrar({ id, password: clave });
+  assert.equal(valido.status, 200);
+  await cerrarSesion({ token: valido.data.token });
+
+  const simultaneos = await Promise.all(Array.from({ length: 6 }, (_, intento) => fallar(intento)));
+  assert.deepEqual(simultaneos.map(intento => intento.status).sort(), [401, 401, 401, 401, 429, 429]);
+  assert.ok(simultaneos.some(intento => intento.status === 429 && /intentos fallidos/.test(intento.message)));
   const limitado = await entrar({ id, password: clave });
   assert.equal(limitado.status, 429);
   assert.ok(Number(limitado.retryAfter) > 0 && Number(limitado.retryAfter) <= 300);
@@ -600,6 +610,59 @@ async function entrar(pagina, id, direccion) {
   await enviarLogin(pagina, id, direccion);
   await pagina.locator('#dashboard').waitFor();
 }
+
+test('El login muestra la espera al quinto fallo y deja cambiar de usuario o recuperar la contraseña', { timeout: 35_000 }, async t => {
+  const cuenta = datosCuenta('7019');
+  await correcto('/usuarios', { method: 'POST', body: cuenta });
+  const navegador = await abrirNavegador(t);
+  const pagina = await navegador.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  pagina.setDefaultTimeout(8000);
+  await pagina.clock.install();
+  await pagina.goto(baseUrl + '/app/');
+  const nombre = pagina.locator('#auth input[name=nombre]');
+  const password = pagina.locator('#auth input[name=password]');
+  const boton = pagina.locator('#auth-submit');
+  const aviso = pagina.locator('#login-lock');
+  const tiempo = aviso.getByRole('timer');
+  await nombre.fill(cuenta.nombre);
+
+  async function enviarClave(valor) {
+    await pagina.waitForFunction(() => !document.getElementById('auth-submit').disabled);
+    await password.fill(valor);
+    const [respuesta] = await Promise.all([
+      pagina.waitForResponse(response => response.url().endsWith('/api/usuarios/login')),
+      boton.click()
+    ]);
+    return respuesta.status();
+  }
+
+  for (let intento = 1; intento <= 5; intento++) {
+    assert.equal(await enviarClave(otraClave), intento === 5 ? 429 : 401);
+  }
+  await aviso.waitFor();
+  assert.match(await tiempo.textContent(), /^\d+:[0-5]\d$/);
+  assert.ok(await boton.isDisabled());
+
+  await pagina.locator('#forgot-toggle').click();
+  const recuperacion = pagina.locator('#forgot-form');
+  await recuperacion.waitFor();
+  await recuperacion.getByRole('button', { name: 'Volver al inicio de sesión' }).click();
+  await aviso.waitFor();
+
+  await nombre.fill(datosCuenta(idUsuario).nombre);
+  assert.ok(await aviso.isHidden());
+  assert.ok(await boton.isEnabled());
+  await nombre.fill(cuenta.nombre);
+  assert.ok(await boton.isDisabled());
+
+  const anterior = await tiempo.textContent();
+  await pagina.clock.fastForward(2000);
+  assert.notEqual(await tiempo.textContent(), anterior);
+  await pagina.clock.fastForward(300_000);
+  assert.ok(await aviso.isHidden());
+  assert.equal(await enviarClave(clave), 429);
+  await aviso.waitFor();
+});
 
 test('El registro muestra y valida cada requisito de contraseña mientras se escribe', { timeout: 35_000 }, async t => {
   const navegador = await abrirNavegador(t);

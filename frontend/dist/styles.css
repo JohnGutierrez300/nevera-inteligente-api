@@ -311,7 +311,7 @@ label {
   background: #ddf2e4;
 }
 
-button[data-password-incomplete]:disabled { cursor: not-allowed; }
+button[data-password-incomplete]:disabled, button[data-login-locked]:disabled { cursor: not-allowed; }
 
 .visually-hidden {
   position: absolute;
@@ -737,6 +737,8 @@ button:active:not(:disabled) {
   color: #8e2327;
   background: #fae9e7;
 }
+
+#login-lock { margin-bottom: .65rem; font-size: .9rem; }
 
 .panel-content {
   display: grid;

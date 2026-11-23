@@ -16,6 +16,7 @@ export async function requestApi(path, method = 'GET', body, options) {
     const error = new Error(payload?.message || 'La API no pudo completar la solicitud.');
     error.status = response.status;
     error.data = payload?.data;
+    error.retryAfter = Number(response.headers.get('Retry-After'));
     throw error;
   }
   return payload;

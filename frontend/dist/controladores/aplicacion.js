@@ -143,7 +143,12 @@ export function startApp() {
       const response = await model.account.signIn(credentials);
       if (generation === viewRequest) await startSession(response.data?.perfil, response.data?.inactividad_restante_ms);
     } catch (error) {
-      if (generation === viewRequest) notice(error);
+      if (generation !== viewRequest) return;
+      if (!registering && error.status === 429 && Number.isSafeInteger(error.retryAfter) && error.retryAfter > 0) {
+        session.blockLogin(credentials.nombre, error.retryAfter);
+      } else {
+        notice(error);
+      }
     }
   }
 

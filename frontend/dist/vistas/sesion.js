@@ -1,15 +1,17 @@
 import { passwordLengthLimit, passwordRequirements } from '../modelos/credenciales.js';
 import { bindPasswords, byId, field, formValues, maskPasswords, notice } from './componentes.js';
 
-function bindSubmit(form, buttons, send, { validate, done } = {}) {
+function bindSubmit(form, buttons, send, { validate, blocked, done } = {}) {
   const submit = form.querySelector('button[type="submit"], button:not([type])');
   let submitting = false;
 
   function update() {
     const valid = validate?.() ?? true;
-    submit.disabled = submitting || !valid;
+    const locked = blocked?.() ?? false;
+    submit.disabled = submitting || !valid || locked;
     submit.toggleAttribute('data-password-incomplete', !valid);
-    return valid;
+    submit.toggleAttribute('data-login-locked', locked);
+    return valid && !locked;
   }
 
   form.addEventListener('submit', async event => {
@@ -93,6 +95,7 @@ function createPasswordChecklist(container, password, confirmation) {
 }
 
 export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry }) {
+  const login = byId('login');
   const auth = byId('auth');
   const forgotForm = byId('forgot-form');
   const resetForm = byId('reset-form');
@@ -100,6 +103,9 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
   const submit = byId('auth-submit');
   const toggle = byId('register-toggle');
   const forgotToggle = byId('forgot-toggle');
+  const username = field(auth, 'nombre');
+  const lockNotice = byId('login-lock');
+  const lockTime = byId('login-lock-time');
   const password = field(auth, 'password');
   const resetPassword = field(resetForm, 'password');
   const resetConfirmation = field(resetForm, 'confirmation');
@@ -107,7 +113,23 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
   const resetChecklist = createPasswordChecklist(byId('reset-password-rules'), resetPassword, resetConfirmation);
   resetChecklist.show(true);
   const forms = { login: auth, forgot: forgotForm, reset: resetForm };
+  const loginLocks = new Map();
+  let lockTimer;
   let registering = false;
+
+  function updateLoginLock() {
+    clearTimeout(lockTimer);
+    const name = username.value;
+    const seconds = Math.ceil(((loginLocks.get(name) ?? 0) - performance.now()) / 1000);
+    if (seconds <= 0) loginLocks.delete(name);
+    const locked = seconds > 0 && !registering && !auth.hidden && !login.hidden;
+    lockNotice.hidden = !locked;
+    if (locked) {
+      lockTime.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+      lockTimer = setTimeout(updateAuthSubmit, 1000);
+    }
+    return locked;
+  }
 
   function setRegistration(active) {
     maskPasswords(auth);
@@ -130,6 +152,7 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
       candidate.hidden = candidate !== form;
       if (candidate.hidden) maskPasswords(candidate);
     }
+    updateAuthSubmit();
     if (focus) form.querySelector('input').focus();
     notice();
   }
@@ -138,6 +161,7 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
   bindPasswords(resetForm);
   const updateAuthSubmit = bindSubmit(auth, [submit, toggle, forgotToggle], fields => onAuth(fields, registering), {
     validate: () => !registering || registerChecklist.update(),
+    blocked: updateLoginLock,
     done: () => { password.value = ''; }
   });
   bindSubmit(forgotForm, forgotForm.querySelectorAll('button'), onRecover);
@@ -145,6 +169,7 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
     validate: resetChecklist.update
   });
   for (const event of ['input', 'change']) {
+    username.addEventListener(event, updateAuthSubmit);
     password.addEventListener(event, updateAuthSubmit);
     resetPassword.addEventListener(event, updateResetSubmit);
     resetConfirmation.addEventListener(event, updateResetSubmit);
@@ -166,10 +191,23 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
   return {
     select,
     setRegistration,
-    resetPasswordForm() { resetForm.reset(); },
+    blockLogin(name, seconds) {
+      const now = performance.now();
+      for (const [key, deadline] of loginLocks) {
+        if (deadline <= now) loginLocks.delete(key);
+      }
+      loginLocks.set(name, now + seconds * 1000);
+      updateAuthSubmit();
+    },
+    resetPasswordForm() {
+      resetForm.reset();
+      loginLocks.clear();
+      updateAuthSubmit();
+    },
     showSession(active) {
       byId('session-check').hidden = true;
-      byId('login').hidden = active;
+      login.hidden = active;
+      updateAuthSubmit();
     },
     showChecking(failed = false) {
       retry.hidden = !failed;
