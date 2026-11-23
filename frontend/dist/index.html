@@ -165,13 +165,15 @@
     </form>
   </dialog>
   <dialog id="delete-dialog" class="confirmation-dialog" aria-labelledby="delete-title" aria-describedby="delete-description">
-    <form method="dialog">
-      <h2 id="delete-title">¿Estás seguro de eliminar este lote?</h2>
-      <p id="delete-description">Esta acción no se puede deshacer.</p>
-      <div class="dialog-actions">
-        <button class="secondary" value="cancel" autofocus>Cancelar</button>
-        <button class="primary delete-confirm" value="confirm">Eliminar lote</button>
-      </div>
+    <h2 id="delete-title">¿Estás seguro de eliminar este lote?</h2>
+    <p id="delete-description">Esta acción no se puede deshacer.</p>
+    <label id="delete-name-field" hidden>
+      <span>Para confirmar, escribe <strong id="delete-expected-name" dir="auto"></strong>.</span>
+      <input id="delete-name" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+    </label>
+    <form method="dialog" class="dialog-actions">
+      <button class="secondary" value="cancel" autofocus>Cancelar</button>
+      <button class="primary delete-confirm" value="confirm">Eliminar lote</button>
     </form>
   </dialog>
   <dialog id="update-dialog" class="confirmation-dialog" aria-labelledby="update-title">

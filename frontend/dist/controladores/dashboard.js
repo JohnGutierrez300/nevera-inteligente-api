@@ -205,7 +205,7 @@ export function createDashboardController({
           } catch (error) {
             if (getProfile() === account) notice(error);
           }
-        })
+        }, { accountName: account.nombre })
     });
   }
 

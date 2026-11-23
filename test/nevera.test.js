@@ -594,7 +594,7 @@ test('El menú táctil horizontal funciona e Inicio sigue disponible cuando fall
   await pagina.getByRole('heading', { name: 'Inventario', exact: true }).waitFor();
 });
 
-test('Mi cuenta muestra el bloqueo por dependencias y cierra sesión cuando se permite eliminar', { timeout: 35_000 }, async t => {
+test('Mi cuenta requiere el nombre exacto y respeta el bloqueo por dependencias al eliminar', { timeout: 35_000 }, async t => {
   const idLibre = '7005';
   const idCuentaWeb = '7009';
   await correcto('/usuarios', { method: 'POST', body: datosCuenta(idLibre) });
@@ -604,20 +604,47 @@ test('Mi cuenta muestra el bloqueo por dependencias y cierra sesión cuando se p
   await cerrarSesion(propietario);
   const navegador = await abrirNavegador(t);
   const pagina = await navegador.newPage({ viewport: { width: 1200, height: 800 } });
-  const confirmar = async () => {
-    await pagina.getByRole('button', { name: 'Mi cuenta', exact: true }).click();
-    await pagina.getByRole('button', { name: 'Eliminar mi cuenta', exact: true }).click();
-    await pagina.getByRole('dialog', { name: '¿Eliminar tu cuenta?' })
-      .getByRole('button', { name: 'Eliminar cuenta', exact: true }).click();
-  };
+  const irACuenta = () => pagina.getByRole('button', { name: 'Mi cuenta', exact: true }).click();
+  const abrirConfirmacion = () => pagina.getByRole('button', { name: 'Eliminar mi cuenta', exact: true }).click();
+  const dialogo = pagina.getByRole('dialog', { name: '¿Eliminar tu cuenta?' });
+  const nombre = dialogo.getByRole('textbox');
+  const eliminar = dialogo.getByRole('button', { name: 'Eliminar cuenta', exact: true });
 
   await entrar(pagina, idCuentaWeb);
-  await confirmar();
+  await irACuenta();
+  await abrirConfirmacion();
+  await nombre.fill(datosCuenta(idCuentaWeb).nombre);
+  await eliminar.click();
   await pagina.getByText(/Registros vinculados.*inventario/).waitFor();
   assert.ok(await pagina.locator('#dashboard').isVisible());
+
+  await pagina.getByRole('button', { name: 'Inventario', exact: true }).click();
+  await pagina.getByRole('button', { name: 'Eliminar', exact: true }).click();
+  const dialogoLote = pagina.getByRole('dialog', { name: '¿Estás seguro de eliminar este lote?' });
+  assert.equal(await dialogoLote.getByRole('textbox').count(), 0);
+  assert.ok(await dialogoLote.getByRole('button', { name: 'Eliminar lote', exact: true }).isEnabled());
+  await dialogoLote.getByRole('button', { name: 'Cancelar', exact: true }).click();
+
   await pagina.getByRole('button', { name: 'Cerrar sesión' }).click();
   await entrar(pagina, idLibre);
-  await confirmar();
+  await irACuenta();
+  await abrirConfirmacion();
+  const nombreExacto = datosCuenta(idLibre).nombre;
+  assert.equal(await dialogo.getByText(nombreExacto, { exact: true }).textContent(), nombreExacto);
+  assert.ok(await eliminar.isDisabled());
+  await nombre.fill(nombreExacto.toUpperCase());
+  assert.ok(await eliminar.isDisabled());
+  await nombre.fill(nombreExacto);
+  assert.ok(await eliminar.isEnabled());
+  await nombre.press('Enter');
+  assert.ok(await dialogo.isVisible());
+  await dialogo.getByRole('button', { name: 'Cancelar', exact: true }).click();
+
+  await abrirConfirmacion();
+  assert.equal(await nombre.inputValue(), '');
+  assert.ok(await eliminar.isDisabled());
+  await nombre.fill(nombreExacto);
+  await eliminar.click();
   await pagina.locator('#login').waitFor();
   await pagina.getByText('Usuario eliminado exitosamente', { exact: true }).waitFor();
   await pagina.reload();

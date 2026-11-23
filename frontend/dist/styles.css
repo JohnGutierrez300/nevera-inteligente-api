@@ -749,6 +749,14 @@ dialog::backdrop { background: #0d271f9e; backdrop-filter: blur(5px); }
   overflow-wrap: anywhere;
 }
 
+#delete-name-field {
+  margin-bottom: 1.05rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+#delete-expected-name { white-space: pre-wrap; }
+
 .confirmation-dialog .dialog-actions { justify-content: center; }
 
 .update-check {
@@ -779,6 +787,8 @@ dialog::backdrop { background: #0d271f9e; backdrop-filter: blur(5px); }
   background: linear-gradient(145deg, #b8333d, #8b212d);
   box-shadow: 0 5px 14px #a52f344a, inset 0 1px #ffffff28;
 }
+
+.delete-confirm:disabled { cursor: not-allowed; }
 
 @media (hover: hover) {
   .delete-confirm:hover:not(:disabled) { box-shadow: 0 9px 18px #a52f3450; }

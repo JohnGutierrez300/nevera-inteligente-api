@@ -14,6 +14,9 @@ export function showLotError(target, error, onConflict) {
 
 export function createDialogs() {
   const confirmDialog = byId('delete-dialog');
+  const confirmButton = confirmDialog.querySelector('[value="confirm"]');
+  const nameField = byId('delete-name-field');
+  const nameInput = byId('delete-name');
   const update = byId('update-dialog');
   const details = byId('detail-dialog');
   const editor = byId('editor-dialog');
@@ -22,6 +25,7 @@ export function createDialogs() {
   const cancel = byId('editor-cancel');
   const formError = byId('editor-error');
   let pendingConfirmation = null;
+  let requiredName = null;
   let feedbackTimer;
 
   function closeFeedback() {
@@ -34,13 +38,24 @@ export function createDialogs() {
     formError.textContent = message;
   }
 
+  function confirmationMatches() {
+    return requiredName === null || nameInput.value === requiredName;
+  }
+
+  function updateConfirmButton() {
+    confirmButton.disabled = !confirmationMatches();
+  }
+
+  nameInput.addEventListener('input', updateConfirmButton);
   confirmDialog.addEventListener('cancel', () => { pendingConfirmation = null; });
   confirmDialog.querySelector('form').addEventListener('submit', event => {
     event.preventDefault();
+    const confirming = event.submitter === confirmButton;
+    if (confirming && !confirmationMatches()) return;
     const confirm = pendingConfirmation;
     pendingConfirmation = null;
     confirmDialog.close();
-    if (event.submitter?.value === 'confirm' && confirm) void confirm();
+    if (confirming && confirm) void confirm();
   });
   details.addEventListener('cancel', event => {
     if (details.querySelector('.detail-actions button:disabled')) event.preventDefault();
@@ -56,11 +71,16 @@ export function createDialogs() {
   });
 
   return {
-    confirm(title, message, label, onConfirm) {
+    confirm(title, message, label, onConfirm, { accountName = null } = {}) {
       if (confirmDialog.open) return;
       byId('delete-title').textContent = title;
       byId('delete-description').replaceChildren(message);
-      confirmDialog.querySelector('[value="confirm"]').textContent = label;
+      confirmButton.textContent = label;
+      requiredName = accountName?.replace(/\r\n?|\n/g, ' ') ?? null;
+      nameField.hidden = requiredName === null;
+      byId('delete-expected-name').textContent = requiredName ?? '';
+      nameInput.value = '';
+      updateConfirmButton();
       pendingConfirmation = onConfirm;
       confirmDialog.showModal();
     },
