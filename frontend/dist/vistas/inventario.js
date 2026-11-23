@@ -2,6 +2,7 @@ import { action, byId, element, field, formValues, formatDate, group, lotStates 
 import { showLotError } from './dialogos.js';
 
 const numberFormat = new Intl.NumberFormat('es-CO', { maximumSignificantDigits: 15 });
+const colombiaOffsetMs = 5 * 60 * 60 * 1000;
 
 function inventoryTable(lots, products, { onView, onEdit, onDelete }) {
   const productNames = new Map(products.map(product => [product._id, product.nombre]));
@@ -107,14 +108,17 @@ export function createInventoryView({ onFilter, onPage, onView, onAdd, onEdit, o
       form.reset();
       showLotError(errorTarget);
       byId('lot-title').textContent = lot?._id ? 'Editar lote' : 'Agregar lote';
+      const vencimiento = field(form, 'fecha_vencimiento');
+      const hoy = new Date(Date.now() - colombiaOffsetMs).toISOString().slice(0, 10);
+      vencimiento.min = lot ? '' : hoy + 'T00:00';
       fillSelect(form, 'producto_id', products, product => product.nombre, lot?.producto_id);
       fillSelect(form, 'unidad_medida_nombre', units, unit => unit._id, lot?.unidad_medida_nombre);
       fillSelect(form, 'ingrediente_nombre', ingredients, ingredient => ingredient._id, lot?.ingrediente_nombre, 'Sin ingrediente');
       if (lot) {
         for (const name of ['nevera_id', 'cantidad', 'estado']) field(form, name).value = lot[name];
         if (lot.fecha_vencimiento) {
-          const bogota = new Date(Date.parse(lot.fecha_vencimiento) - 5 * 60 * 60 * 1000);
-          if (Number.isFinite(bogota.getTime())) field(form, 'fecha_vencimiento').value = bogota.toISOString().slice(0, -1);
+          const bogota = new Date(Date.parse(lot.fecha_vencimiento) - colombiaOffsetMs);
+          if (Number.isFinite(bogota.getTime())) vencimiento.value = bogota.toISOString().slice(0, -1);
         }
       }
       dialog.showModal();

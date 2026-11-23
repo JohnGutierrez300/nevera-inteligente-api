@@ -185,6 +185,7 @@ const Sesion = mongoose.model('Sesion', new mongoose.Schema({
   web: Boolean,
   vence: { type: Date, required: true, expires: 0 }
 }, { collection: 'sesiones', versionKey: false }));
+Sesion.schema.index({ usuario: 1, credencial: 1, vence: -1, _id: 1 });
 
 const BloqueoMutaciones = mongoose.model('BloqueoMutaciones', new mongoose.Schema({
   _id: String,
@@ -269,6 +270,7 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
 
 const DURACION_SESION_MS = 24 * 60 * 60 * 1000;
 const DURACION_SESION_WEB_MS = 30 * DURACION_SESION_MS;
+const MENSAJE_SESION_ACTIVA = 'Esta cuenta ya tiene una sesión activa. Cierra esa sesión para iniciar otra.';
 const CLAVE_SEGURA = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,1024}$/;
 const NOMBRE_COOKIE = 'nevera_session';
 const ADMINISTRADORES_CATALOGO = new Set(
@@ -301,6 +303,11 @@ function tokenCookie(req) {
   return null;
 }
 
+function buscarSesionActiva(usuario, credencial, ahora) {
+  // Las cuentas que ya tenían varias sesiones conservan la que vence más tarde.
+  return Sesion.findOne({ usuario, credencial, vence: { $gt: ahora } }).sort({ vence: -1, _id: 1 }).lean();
+}
+
 async function renovarSesionWeb(req, res, token, sesion, ahora) {
   if (req.method === 'POST' && /^\/usuarios\/logout\/?$/i.test(req.path)) return;
 
@@ -331,7 +338,10 @@ async function autenticar(req, res, next) {
   const ahora = new Date();
   const sesion = token && await Sesion.findOne({ _id: huella(token), vence: { $gt: ahora } }).lean();
   const usuario = sesion && await Usuario.findById(sesion.usuario).select('+password_hash').lean();
-  if (typeof usuario?.password_hash !== 'string' || huella(usuario.password_hash) !== sesion.credencial) {
+  const credencial = typeof usuario?.password_hash === 'string' && huella(usuario.password_hash);
+  const activa = credencial && credencial === sesion.credencial &&
+    await buscarSesionActiva(usuario._id, credencial, ahora);
+  if (!activa || activa._id !== sesion._id) {
     if (sesionWeb) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
     res.set('WWW-Authenticate', 'Bearer');
     throw new ApiError(401, 'Inicia sesión y proporciona un token válido');
@@ -339,8 +349,8 @@ async function autenticar(req, res, next) {
   req.usuarioId = usuario._id;
   req.usuario = usuario;
   req.sesionWeb = sesionWeb;
-  req.sesionId = sesion._id;
-  if (sesionWeb && sesion.web === true) await renovarSesionWeb(req, res, token, sesion, ahora);
+  req.sesionId = activa._id;
+  if (sesionWeb && activa.web === true) await renovarSesionWeb(req, res, token, activa, ahora);
   next();
 }
 
@@ -376,7 +386,7 @@ async function enTransaccion(operacion) {
   }
   await bloqueoListo;
   return mongoose.connection.transaction(async () => {
-    // Serializa las altas de referencias y los borrados entre instancias de la API.
+    // Serializa las operaciones de integridad entre instancias de la API.
     await BloqueoMutaciones.updateOne({ _id: 'referencias' }, { $inc: { revision: 1 } });
     return operacion();
   });
@@ -482,11 +492,28 @@ app.post('/api/usuarios/login', async (req, res) => {
     usuario.password_hash = hash;
   }
 
-  const token = randomBytes(32).toString('hex');
   const web = sesion_web === true;
-  const duracion = web ? DURACION_SESION_WEB_MS : DURACION_SESION_MS;
-  const vence = new Date(Date.now() + duracion);
-  await Sesion.create({ _id: huella(token), usuario: usuario._id, credencial: huella(usuario.password_hash), vence, web });
+  const tokenActual = web ? tokenCookie(req) : null;
+  const credencial = huella(usuario.password_hash);
+  const { token, vence } = await enTransaccion(async () => {
+    const ahora = new Date();
+    const usuarioVigente = await Usuario.exists({ _id: usuario._id, password_hash: usuario.password_hash });
+    if (!usuarioVigente) throw new ApiError(401, 'Vuelve a iniciar sesión');
+    const activa = await buscarSesionActiva(usuario._id, credencial, ahora);
+    if (activa) {
+      if (activa.web === true && tokenActual && huella(tokenActual) === activa._id) {
+        return { token: tokenActual, vence: activa.vence };
+      }
+      throw new ApiError(409, MENSAJE_SESION_ACTIVA);
+    }
+    // Una renovación que llegue tarde no debe reactivar una sesión anterior.
+    await Sesion.deleteMany({ usuario: usuario._id });
+    const nuevoToken = randomBytes(32).toString('hex');
+    const duracion = web ? DURACION_SESION_WEB_MS : DURACION_SESION_MS;
+    const vencimiento = new Date(ahora.getTime() + duracion);
+    await Sesion.create({ _id: huella(nuevoToken), usuario: usuario._id, credencial, vence: vencimiento, web });
+    return { token: nuevoToken, vence: vencimiento };
+  });
   res.set('Cache-Control', 'no-store');
   if (web) {
     escribirCookieSesion(req, res, token, vence);
@@ -595,7 +622,13 @@ app.get('/api/usuarios/me', (req, res) => {
 });
 
 app.post('/api/usuarios/logout', async (req, res) => {
-  await Sesion.deleteOne({ _id: req.sesionId });
+  await enTransaccion(async () => {
+    const credencial = huella(req.usuario.password_hash);
+    const activa = await buscarSesionActiva(req.usuarioId, credencial, new Date());
+    if (activa?._id === req.sesionId) {
+      await Sesion.deleteMany({ usuario: req.usuarioId, credencial });
+    }
+  });
   res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
   res.status(200).json(responseFormat(true, 'Sesión cerrada'));
 });
@@ -911,6 +944,7 @@ mutacion('delete', '/api/productos/:id', async req => {
 
 // 6. Inventario (Con acumulación inteligente si ya existe)
 const FECHA_INVENTARIO = /^(\d{4}-(?:0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]))T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i;
+const HORA_COLOMBIA_MS = 5 * 60 * 60 * 1000;
 
 function fechaInventario(valor, campo) {
   const partes = typeof valor === 'string' && FECHA_INVENTARIO.exec(valor);
@@ -922,6 +956,16 @@ function fechaInventario(valor, campo) {
     }
   }
   throw new ApiError(400, `Envía una fecha y hora válidas para ${campo}, con zona horaria.`);
+}
+
+function fechaAltaInventario(valor) {
+  if (valor == null) return null;
+  const fecha = fechaInventario(valor, 'fecha_vencimiento');
+  const hoy = new Date(Date.now() - HORA_COLOMBIA_MS).toISOString().slice(0, 10);
+  if (fecha < new Date(hoy + 'T00:00:00-05:00')) {
+    throw new ApiError(400, 'El vencimiento debe ser de hoy en adelante, según la hora de Colombia.');
+  }
+  return fecha;
 }
 
 function cuerpoInventario(cuerpo) {
@@ -975,7 +1019,7 @@ mutacion('post', '/api/inventario', async req => {
     producto_id,
     ingrediente_nombre: ingrediente_nombre === '' ? null : ingrediente_nombre ?? null,
     unidad_medida_nombre,
-    fecha_vencimiento: fecha_vencimiento == null ? null : fechaInventario(fecha_vencimiento, 'fecha_vencimiento'),
+    fecha_vencimiento: fechaAltaInventario(fecha_vencimiento),
     estado
   };
   await validarReferencias(Inventario, lote);

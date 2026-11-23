@@ -9,7 +9,7 @@ info:
     - **Restricción al eliminar (409):** un recurso no puede eliminarse mientras otros registros lo referencien. La API responde `409` con el mensaje *"No se puede eliminar el registro porque está siendo utilizado en otros registros del sistema"* e indica en `data.dependencias` qué colecciones lo usan.
     - El historial de inventario es una bitácora y no bloquea eliminaciones.
     - **Validación en vivo:** al pulsar *Try it out*, los campos de ID (ruta, query y campos foráneos del body) se validan mientras se escriben o al salir del campo, sin presionar *Execute* (✅ / ❌ bajo el campo).
-    **Autenticación:** usa `POST /api/usuarios/login` y pega `data.token` en **Authorize**. La aplicación web usa una cookie del mismo origen que se renueva con el uso y vence tras 30 días de inactividad. Las rutas privadas solo muestran los datos de la sesión. La lectura de catálogos es pública y las escrituras requieren un administrador configurado en `CATALOG_ADMIN_IDS`.
+    **Autenticación:** usa `POST /api/usuarios/login` y pega `data.token` en **Authorize**. La aplicación web usa una cookie del mismo origen que se renueva con el uso y vence tras 30 días de inactividad. Cada cuenta admite una sesión activa entre la aplicación web y Bearer. Las rutas privadas solo muestran los datos de la sesión. La lectura de catálogos es pública y las escrituras requieren un administrador configurado en `CATALOG_ADMIN_IDS`.
 
     **Inventario:** se acumulan los lotes del mismo producto si coinciden el usuario, la nevera, la unidad, el estado, el vencimiento y el ingrediente opcional. Si una edición hace que el lote coincida con otro, la API responde `409` e indica el lote existente. Si omites la nevera al crear, se usa NEVERA-01. Las alertas se revisan al iniciar el servidor y cada hora mientras está activo, para lotes en nevera que vencen en las próximas 72 horas.
   version: '1.4.0'
@@ -58,7 +58,7 @@ paths:
       tags: [Usuarios]
       operationId: loginUser
       summary: Iniciar sesión y obtener un token Bearer de 24 horas
-      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger.
+      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger. Cada cuenta admite una sesión activa. El navegador que ya tiene la cookie válida puede continuar con la misma sesión.
       requestBody:
         required: true
         content:
@@ -103,6 +103,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+        "409":
+          description: La cuenta ya tiene una sesión activa. Ciérrala para iniciar otra.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
         "500":
           $ref: '#/components/responses/InternalError'
 
@@ -1579,7 +1585,7 @@ components:
           type: string
           format: date-time
           nullable: true
-          description: Fecha y hora válidas con zona horaria. Usa null para un lote sin vencimiento.
+          description: Fecha y hora con zona horaria. Al agregar un lote, debe ser de hoy en adelante según la hora de Colombia. Usa null para un lote sin vencimiento.
           example: '2026-12-31T00:00:00.000Z'
         estado:
           type: string

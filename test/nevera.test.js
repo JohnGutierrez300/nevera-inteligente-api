@@ -8,11 +8,13 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server-core');
 const { mongo: { MongoClient } } = require('mongoose');
 const { chromium } = require('playwright');
 const { configurarCorreo } = require('../correo-recuperacion');
+const { huella } = require('../credenciales');
 
 const raiz = path.resolve(__dirname, '..');
 const clave = 'PruebaNevera2026!';
 const otraClave = 'PruebaNevera2030!';
 const idAdmin = '7001';
+const idAdminLocal = '7010';
 const idUsuario = '7002';
 const idCuenta = '7003';
 const idBorrado = '7004';
@@ -108,6 +110,14 @@ async function sesion(id, sesion_web = false) {
   return { token: respuesta.data.token };
 }
 
+async function cerrarSesion(auth) {
+  await correcto('/usuarios/logout', { ...auth, method: 'POST' });
+}
+
+function hoyEnColombia() {
+  return new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 const agregar = (body, auth = usuario) => correcto('/inventario', {
   ...auth, method: 'POST', body: { ...loteBase, ...body }
 });
@@ -119,7 +129,7 @@ before(async () => {
   servidor = spawn(process.execPath, ['--import', gmail, 'server.js'], {
     cwd: raiz,
     env: {
-      ...process.env, PORT: '0', MONGO_URI: mongoUri, CATALOG_ADMIN_IDS: idAdmin,
+      ...process.env, PORT: '0', MONGO_URI: mongoUri, CATALOG_ADMIN_IDS: [idAdmin, idAdminLocal].join(','),
       GMAIL_USER: 'nevera@example.test', GMAIL_APP_PASSWORD: '', GMAIL_CLIENT_ID: 'cliente-de-prueba',
       GMAIL_CLIENT_SECRET: 'secreto-de-prueba', GMAIL_REFRESH_TOKEN: 'actualizacion-de-prueba',
       PASSWORD_RESET_URL: '', RENDER_EXTERNAL_URL: 'https://nevera-prueba.example', DOTENV_CONFIG_QUIET: 'true'
@@ -244,18 +254,93 @@ test('La paginación respeta filtros y orden y conserva la respuesta de las cons
   assert.equal((await api(url + '&pagina=0', usuario)).status, 400);
 });
 
+test('El alta de inventario admite desde hoy en Colombia y rechaza el día anterior', async () => {
+  const inicioHoy = new Date(hoyEnColombia() + 'T00:00:00-05:00');
+  const fechaAnterior = new Date(inicioHoy.getTime() - 1).toISOString();
+  const datos = { ...loteBase, nevera_id: 'FECHAS-COLOMBIA' };
+  const pasado = await api('/inventario', {
+    ...usuario, method: 'POST', body: { ...datos, fecha_vencimiento: fechaAnterior }
+  });
+  assert.equal(pasado.status, 400);
+  assert.match(pasado.message, /hoy en adelante.*Colombia/);
+
+  const hoy = await agregar({ ...datos, fecha_vencimiento: inicioHoy.toISOString() });
+  assert.equal(hoy.fecha_vencimiento, inicioHoy.toISOString());
+  const sinFecha = await agregar({ ...datos, fecha_vencimiento: null });
+  assert.equal(sinFecha.fecha_vencimiento, null);
+  const editado = await correcto('/inventario/' + hoy._id, {
+    ...usuario, method: 'PUT', body: { fecha_vencimiento: fechaAnterior }
+  });
+  assert.equal(editado.fecha_vencimiento, fechaAnterior);
+});
+
+test('Dos inicios simultáneos de la misma cuenta solo crean una sesión entre web y Bearer', async () => {
+  const id = '7011';
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
+  const iniciar = (sesion_web, auth = {}) => api('/usuarios/login', {
+    ...auth, method: 'POST', body: { id, password: clave, sesion_web }
+  });
+  const intentos = await Promise.all([iniciar(true), iniciar(false)]);
+  assert.deepEqual(intentos.map(intento => intento.status).sort(), [200, 409]);
+  assert.match(intentos.find(intento => intento.status === 409).message, /sesión activa/);
+  const abierto = intentos.find(intento => intento.status === 200);
+  const auth = abierto.cookie ? { cookie: abierto.cookie } : { token: abierto.data.token };
+  assert.equal((await correcto('/usuarios/me', auth))._id, id);
+  await cerrarSesion(auth);
+  assert.equal((await api('/usuarios/me', auth)).status, 401);
+
+  const web = await sesion(id, true);
+  const mismoNavegador = await iniciar(true, web);
+  assert.equal(mismoNavegador.status, 200);
+  assert.equal(mismoNavegador.cookie, web.cookie);
+  assert.equal((await iniciar(true)).status, 409);
+  assert.equal((await iniciar(false)).status, 409);
+  await cerrarSesion(web);
+  const bearer = await sesion(id);
+  assert.equal((await correcto('/usuarios/me', bearer))._id, id);
+});
+
+test('Las sesiones anteriores conservan una sola sesión y los registros vencidos liberan el acceso', async () => {
+  const id = '7012';
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
+  const primera = 'a'.repeat(64);
+  const segunda = 'b'.repeat(64);
+  const cliente = await new MongoClient(mongoUri).connect();
+  try {
+    const db = cliente.db();
+    const { password_hash } = await db.collection('usuarios').findOne({ _id: id });
+    const credencial = huella(password_hash);
+    const sesiones = db.collection('sesiones');
+    await sesiones.insertMany([
+      { _id: huella(primera), usuario: id, credencial, web: true, vence: new Date(Date.now() + 60_000) },
+      { _id: huella(segunda), usuario: id, credencial, web: false, vence: new Date(Date.now() + 120_000) }
+    ]);
+    assert.equal((await api('/usuarios/me', { cookie: 'nevera_session=' + primera })).status, 401);
+    assert.equal((await correcto('/usuarios/me', { token: segunda }))._id, id);
+    await cerrarSesion({ token: segunda });
+    assert.equal((await api('/usuarios/me', { token: primera })).status, 401);
+    const nueva = await sesion(id);
+    await sesiones.updateOne({ _id: huella(nueva.token) }, { $set: { vence: new Date(Date.now() - 1000) } });
+    const posterior = await sesion(id, true);
+    assert.equal((await correcto('/usuarios/me', posterior))._id, id);
+    assert.equal((await api('/usuarios/me', nueva)).status, 401);
+  } finally {
+    await cliente.close();
+  }
+});
+
 test('Cambiar correo o contraseña requiere la contraseña actual con Bearer y con cookie', async () => {
   const bearer = await sesion(idCuenta);
-  const web = await sesion(idCuenta, true);
   const ruta = '/usuarios/' + idCuenta;
   const email = 'actualizado@nevera.test';
-  for (const auth of [bearer, web]) {
-    for (const cambio of [{ email }, { password: otraClave }]) {
+  async function exigirClaveActual(auth) {
+    for (const cambio of [{ email: 'sin-confirmar@nevera.test' }, { password: otraClave }]) {
       const respuesta = await api(ruta, { ...auth, method: 'PUT', body: cambio });
       assert.equal(respuesta.status, 403);
       assert.match(respuesta.message, /contraseña actual/);
     }
   }
+  await exigirClaveActual(bearer);
   assert.equal((await api(ruta, {
     ...bearer, method: 'PUT', body: { email, password_actual: 'NoEsLaCorrecta!' }
   })).status, 403);
@@ -267,6 +352,9 @@ test('Cambiar correo o contraseña requiere la contraseña actual con Bearer y c
     ...bearer, method: 'PUT', body: { email, password_actual: clave }
   });
   assert.equal(actualizado.email, email);
+  await cerrarSesion(bearer);
+  const web = await sesion(idCuenta, true);
+  await exigirClaveActual(web);
   await correcto(ruta, { ...web, method: 'PUT', body: { password: otraClave, password_actual: clave } });
   for (const auth of [bearer, web]) {
     assert.equal((await api('/usuarios/me', auth)).status, 401);
@@ -333,13 +421,17 @@ async function abrirNavegador(t) {
   return navegador;
 }
 
-async function entrar(pagina, id, direccion = baseUrl + '/app/') {
+async function enviarLogin(pagina, id, direccion = baseUrl + '/app/') {
   pagina.setDefaultTimeout(8000);
   await pagina.goto(direccion);
   const formulario = pagina.locator('#auth');
   await formulario.locator('input[name=nombre]').fill(datosCuenta(id).nombre);
   await formulario.locator('input[name=password]').fill(clave);
   await formulario.getByRole('button', { name: 'Entrar', exact: true }).click();
+}
+
+async function entrar(pagina, id, direccion) {
+  await enviarLogin(pagina, id, direccion);
   await pagina.locator('#dashboard').waitFor();
 }
 
@@ -392,13 +484,26 @@ test('El registro muestra y valida cada requisito de contraseña mientras se esc
 });
 
 test('El frontend pagina, muestra el lote en conflicto y conserva sesión y vista al recargar', { timeout: 60_000 }, async t => {
+  const idInventarioWeb = '7007';
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(idInventarioWeb) });
+  const sesionInventario = await sesion(idInventarioWeb);
   for (let dia = 1; dia <= 21; dia++) {
-    await agregar({ nevera_id: 'PAGINAS-WEB', fecha_vencimiento: `2032-09-${String(dia).padStart(2, '0')}T12:00:00-05:00` }, admin);
+    await agregar({ nevera_id: 'PAGINAS-WEB', fecha_vencimiento: `2032-09-${String(dia).padStart(2, '0')}T12:00:00-05:00` }, sesionInventario);
   }
+  await cerrarSesion(sesionInventario);
   const navegador = await abrirNavegador(t);
   const pagina = await navegador.newPage({ viewport: { width: 1200, height: 800 } });
-  await entrar(pagina, idAdmin);
+  await entrar(pagina, idInventarioWeb);
   await pagina.getByRole('button', { name: 'Inventario', exact: true }).click();
+  const formulario = pagina.locator('#lot-form');
+  const vencimiento = formulario.locator('input[name=fecha_vencimiento]');
+  await pagina.getByRole('button', { name: 'Agregar lote', exact: true }).click();
+  await vencimiento.waitFor();
+  assert.equal(await vencimiento.getAttribute('min'), hoyEnColombia() + 'T00:00');
+  const ayer = new Date(Date.parse(hoyEnColombia() + 'T00:00:00Z') - 86_400_000).toISOString().slice(0, 10);
+  await vencimiento.fill(ayer + 'T12:00');
+  assert.ok(await vencimiento.evaluate(input => input.validity.rangeUnderflow));
+  await formulario.getByRole('button', { name: 'Cancelar', exact: true }).click();
   const filtros = pagina.locator('#filters');
   const filas = pagina.locator('.inventory-table tbody tr');
   await filtros.locator('input[name=nevera_id]').fill('PAGINAS-WEB');
@@ -412,8 +517,9 @@ test('El frontend pagina, muestra el lote en conflicto y conserva sesión y vist
   assert.equal(await filas.count(), 1);
   assert.ok(await pagina.getByRole('button', { name: 'Siguiente' }).isDisabled());
   await filas.first().getByRole('button', { name: 'Editar', exact: true }).click();
-  const formulario = pagina.locator('#lot-form');
-  await formulario.locator('input[name=fecha_vencimiento]').fill('2032-09-01T12:00');
+  await vencimiento.waitFor();
+  assert.equal(await vencimiento.evaluate(input => input.min), '');
+  await vencimiento.fill('2032-09-01T12:00');
   await formulario.getByRole('button', { name: 'Guardar', exact: true }).click();
   await formulario.locator('#lot-error').waitFor();
   assert.match(await formulario.locator('#lot-error').textContent(), /Ya existe un lote/);
@@ -444,7 +550,26 @@ test('El frontend pagina, muestra el lote en conflicto y conserva sesión y vist
   await pagina.locator('#login').waitFor();
 });
 
+test('Un segundo navegador muestra el bloqueo hasta que el primero cierra sesión', { timeout: 40_000 }, async t => {
+  const id = '7013';
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
+  const navegador = await abrirNavegador(t);
+  const primero = await navegador.newPage();
+  const segundo = await navegador.newPage();
+  await entrar(primero, id);
+  await enviarLogin(segundo, id);
+  await segundo.getByText(/cuenta ya tiene una sesión activa/).waitFor();
+  assert.ok(await segundo.locator('#dashboard').isHidden());
+  await primero.reload();
+  await primero.locator('#dashboard').waitFor();
+  await primero.getByRole('button', { name: 'Cerrar sesión' }).click();
+  await primero.locator('#login').waitFor();
+  await entrar(segundo, id);
+});
+
 test('El menú táctil horizontal funciona e Inicio sigue disponible cuando fallan los avisos', { timeout: 35_000 }, async t => {
+  const idMovil = '7008';
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(idMovil) });
   const navegador = await abrirNavegador(t);
   const pagina = await navegador.newPage({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true });
   const responderAvisos = Promise.withResolvers();
@@ -453,7 +578,7 @@ test('El menú táctil horizontal funciona e Inicio sigue disponible cuando fall
     await route.fulfill({ status: 503, json: { success: false, message: 'Avisos no disponibles' } });
   });
   try {
-    await entrar(pagina, idUsuario);
+    await entrar(pagina, idMovil);
     await pagina.getByText('Lotes en nevera', { exact: true }).waitFor();
     await pagina.getByText('Consultando avisos…', { exact: true }).waitFor();
   } finally {
@@ -471,8 +596,12 @@ test('El menú táctil horizontal funciona e Inicio sigue disponible cuando fall
 
 test('Mi cuenta muestra el bloqueo por dependencias y cierra sesión cuando se permite eliminar', { timeout: 35_000 }, async t => {
   const idLibre = '7005';
+  const idCuentaWeb = '7009';
   await correcto('/usuarios', { method: 'POST', body: datosCuenta(idLibre) });
-  await agregar({ nevera_id: 'CUENTA-WEB' });
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(idCuentaWeb) });
+  const propietario = await sesion(idCuentaWeb);
+  await agregar({ nevera_id: 'CUENTA-WEB' }, propietario);
+  await cerrarSesion(propietario);
   const navegador = await abrirNavegador(t);
   const pagina = await navegador.newPage({ viewport: { width: 1200, height: 800 } });
   const confirmar = async () => {
@@ -482,7 +611,7 @@ test('Mi cuenta muestra el bloqueo por dependencias y cierra sesión cuando se p
       .getByRole('button', { name: 'Eliminar cuenta', exact: true }).click();
   };
 
-  await entrar(pagina, idUsuario);
+  await entrar(pagina, idCuentaWeb);
   await confirmar();
   await pagina.getByText(/Registros vinculados.*inventario/).waitFor();
   assert.ok(await pagina.locator('#dashboard').isVisible());
@@ -496,10 +625,13 @@ test('Mi cuenta muestra el bloqueo por dependencias y cierra sesión cuando se p
 });
 
 test('El servidor local carga el frontend MVC y permite usar planes, avisos, catálogo e historial', { timeout: 45_000 }, async t => {
-  await agregar({ nevera_id: 'FRONTEND-MVC', ingrediente_nombre: 'Leche' }, admin);
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(idAdminLocal) });
+  const sesionAdminLocal = await sesion(idAdminLocal);
+  await agregar({ nevera_id: 'FRONTEND-MVC', ingrediente_nombre: 'Leche' }, sesionAdminLocal);
   const aviso = await correcto('/notificaciones', {
-    ...admin, method: 'POST', body: { mensaje: 'Queda leche para el desayuno', tipo: 'STOCK_BAJO' }
+    ...sesionAdminLocal, method: 'POST', body: { mensaje: 'Queda leche para el desayuno', tipo: 'STOCK_BAJO' }
   });
+  await cerrarSesion(sesionAdminLocal);
   const frontend = spawn(process.execPath, ['frontend/servir.js'], {
     cwd: raiz,
     env: { ...process.env, FRONTEND_PORT: '0', API_PORT: new URL(baseUrl).port },
@@ -513,7 +645,7 @@ test('El servidor local carga el frontend MVC y permite usar planes, avisos, cat
 
   const navegador = await abrirNavegador(t);
   const pagina = await navegador.newPage({ viewport: { width: 1200, height: 800 } });
-  await entrar(pagina, idAdmin, inicio[1]);
+  await entrar(pagina, idAdminLocal, inicio[1]);
   const irA = vista => pagina.locator('#navigation [data-view="' + vista + '"]').click();
   const editor = pagina.locator('#editor-form');
   await irA('plans');
@@ -532,7 +664,9 @@ test('El servidor local carga el frontend MVC y permite usar planes, avisos, cat
   const filaAviso = pagina.locator('.feature-row').filter({ hasText: aviso.mensaje });
   await filaAviso.getByRole('button', { name: 'Marcar como leída' }).click();
   await filaAviso.getByRole('button', { name: 'Marcar sin leer' }).waitFor();
-  assert.equal((await correcto('/notificaciones/' + aviso._id, admin)).leida, true);
+  const cookie = (await pagina.context().cookies()).find(variable => variable.name === 'nevera_session');
+  assert.ok(cookie);
+  assert.equal((await correcto('/notificaciones/' + aviso._id, { cookie: cookie.name + '=' + cookie.value })).leida, true);
 
   await irA('catalog');
   await pagina.getByRole('button', { name: 'Agregar producto', exact: true }).click();
