@@ -260,6 +260,49 @@ label {
 
 .welcome label, #lot-form label, #editor-fields label { margin-bottom: 1.05rem; }
 
+.recovery-code { position: relative; }
+
+.recovery-code input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  height: 100%;
+  opacity: 0;
+  cursor: text;
+}
+
+.recovery-code-digits {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: clamp(.38rem, 1.4vw, .65rem);
+}
+
+.recovery-code-digits > span {
+  display: grid;
+  place-items: center;
+  height: clamp(3.2rem, 13vw, 4.1rem);
+  border: 1px solid #b9cfc0;
+  border-radius: .75rem;
+  background: #fff;
+  color: var(--ink);
+  font-size: clamp(1.55rem, 5.8vw, 2.2rem);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  transition: background-color var(--transition), border-color var(--transition);
+}
+
+.recovery-code-digits > span:not(:empty) {
+  border-color: #9cbea7;
+  background: #eaf5ed;
+}
+
+.recovery-code:focus-within [data-current] {
+  border-color: var(--green);
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+
 .password-field {
   position: relative;
   margin-bottom: 1.05rem;

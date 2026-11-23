@@ -716,7 +716,17 @@ test('El login muestra la espera y el último intento. El código por correo des
   const { token, codigo } = await leerCorreoRecuperacion(cuenta.email);
   const guardado = await cliente.db().collection('usuarios').findOne({ _id: cuenta.id });
   assert.match(guardado.recuperacion_codigo_hash, /^[a-f0-9]{64}$/);
-  await codigoWeb.fill(codigo === '012345' ? '012346' : '012345');
+  const casillas = formulario.locator('.recovery-code-digits > span');
+  const incorrecto = codigo === '012345' ? '012346' : '012345';
+  await codigoWeb.pressSequentially('0x');
+  assert.deepEqual(await casillas.allTextContents(), ['0', '', '', '', '', '']);
+  await codigoWeb.evaluate((input, texto) => {
+    const datos = new DataTransfer();
+    datos.setData('text/plain', texto);
+    input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: datos, bubbles: true, cancelable: true }));
+  }, '012 ' + incorrecto.slice(3));
+  assert.equal(await codigoWeb.inputValue(), incorrecto);
+  assert.deepEqual(await casillas.allTextContents(), [...incorrecto]);
   await formulario.locator('input[name=password]').fill(otraClave);
   await formulario.locator('input[name=confirmation]').fill(otraClave);
   const guardar = formulario.getByRole('button', { name: 'Guardar contraseña' });

@@ -88,7 +88,15 @@
         <h2>Elige una contraseña nueva</h2>
         <div id="reset-code-fields" hidden>
           <label>Correo de tu cuenta<input name="email" type="email" maxlength="254" autocomplete="email" required disabled></label>
-          <label>Código de 6 dígitos<input name="codigo" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code" required disabled></label>
+          <label>
+            Código de 6 dígitos
+            <span class="recovery-code">
+              <input name="codigo" type="text" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code" required disabled>
+              <span class="recovery-code-digits" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span><span></span>
+              </span>
+            </span>
+          </label>
         </div>
         <label>Contraseña nueva<input name="password" type="password" autocomplete="new-password" required></label>
         <div class="password-requirements" id="reset-password-rules"></div>
