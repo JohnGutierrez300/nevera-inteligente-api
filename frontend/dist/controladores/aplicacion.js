@@ -5,8 +5,10 @@ import { createDialogs } from '../vistas/dialogos.js';
 import { createInventoryView, lotDeletionMessage, lotDetails } from '../vistas/inventario.js';
 import { createSessionView } from '../vistas/sesion.js';
 import { createDashboardController } from './dashboard.js';
+import { createIdleTimer } from './inactividad.js';
 
 const inventoryPageSize = 20;
+const idleMessage = 'Tu sesión se cerró tras 7 minutos de inactividad. Vuelve a iniciar sesión.';
 
 export function startApp() {
   let user = null;
@@ -17,14 +19,27 @@ export function startApp() {
   let editingId = '';
   let recoveryToken = '';
 
-  const model = createModel(async (path, method, body) => {
+  const model = createModel(async (path, method, body, options) => {
     const active = user;
     try {
-      return await requestApi(path, method, body);
+      return await requestApi(path, method, body, options);
     } catch (error) {
-      if (error.status === 401 && active && active === user) endSession('Tu sesión venció. Vuelve a iniciar sesión.');
+      if (error.status === 401 && active && active === user) {
+        endSession(idle.expired ? idleMessage : 'Tu sesión venció. Vuelve a iniciar sesión.');
+      }
       throw error;
     }
+  });
+  const idle = createIdleTimer({
+    async report(elapsed) {
+      const { data } = await model.account.reportActivity(elapsed);
+      return data.inactividad_restante_ms;
+    },
+    async check(accountId) {
+      const response = await model.account.get({ signal: AbortSignal.timeout?.(3000) });
+      return response.data._id === accountId ? response.inactividad_restante_ms : 0;
+    },
+    onExpired: () => endSession(idleMessage)
   });
   const dialogs = createDialogs();
   const app = createAppView({ onNavigate: selectView, onLogout: signOut });
@@ -69,14 +84,17 @@ export function startApp() {
     app.showSession(active);
   }
 
-  function startSession(profile, view = 'home') {
+  function startSession(profile, remainingMs, view = 'home') {
     if (!profile?._id) throw new Error('No se pudo obtener el perfil de la sesión.');
+    if (!Number.isFinite(remainingMs) || remainingMs <= 0) return endSession(idleMessage);
     user = profile;
+    idle.start(profile._id, remainingMs);
     showSession(true);
     return selectView(view);
   }
 
   function endSession(message = '') {
+    idle.stop();
     user = null;
     viewRequest++;
     inventoryPage = 1;
@@ -103,7 +121,7 @@ export function startApp() {
         return;
       }
       const response = await model.account.signIn(credentials);
-      if (generation === viewRequest) await startSession(response.data?.perfil);
+      if (generation === viewRequest) await startSession(response.data?.perfil, response.data?.inactividad_restante_ms);
     } catch (error) {
       if (generation === viewRequest) notice(error);
     }
@@ -152,10 +170,10 @@ export function startApp() {
     const generation = viewRequest;
     session.showChecking();
     try {
-      const profile = await model.account.get();
+      const response = await model.account.get();
       if (generation !== viewRequest) return;
       const view = new URLSearchParams(location.search).get('vista');
-      await startSession(profile, Object.hasOwn(viewTitles, view) ? view : 'home');
+      await startSession(response.data, response.inactividad_restante_ms, Object.hasOwn(viewTitles, view) ? view : 'home');
     } catch (error) {
       if (generation !== viewRequest) return;
       if (error.status === 401) showSession(false);

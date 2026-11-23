@@ -9,7 +9,7 @@ info:
     - **Restricción al eliminar (409):** un recurso no puede eliminarse mientras otros registros lo referencien. La API responde `409` con el mensaje *"No se puede eliminar el registro porque está siendo utilizado en otros registros del sistema"* e indica en `data.dependencias` qué colecciones lo usan.
     - El historial de inventario es una bitácora y no bloquea eliminaciones.
     - **Validación en vivo:** al pulsar *Try it out*, los campos de ID (ruta, query y campos foráneos del body) se validan mientras se escriben o al salir del campo, sin presionar *Execute* (✅ / ❌ bajo el campo).
-    **Autenticación:** usa `POST /api/usuarios/login` y pega `data.token` en **Authorize**. La aplicación web usa una cookie del mismo origen que se renueva con el uso y vence tras 30 días de inactividad. Cada cuenta admite una sesión activa entre la aplicación web y Bearer. Las rutas privadas solo muestran los datos de la sesión. La lectura de catálogos es pública y las escrituras requieren un administrador configurado en `CATALOG_ADMIN_IDS`.
+    **Autenticación:** usa `POST /api/usuarios/login` y pega `data.token` en **Authorize**. Cada cuenta admite una sesión activa. Tras 7 minutos sin actividad, la sesión vence y la cuenta queda disponible para un nuevo inicio de sesión. La aplicación web registra las interacciones del usuario. Con Bearer, una solicitud autenticada cuenta como actividad y el token tiene una vigencia máxima de 24 horas. Las rutas privadas solo muestran los datos de la sesión. La lectura de catálogos es pública y las escrituras requieren un administrador configurado en `CATALOG_ADMIN_IDS`.
 
     **Inventario:** se acumulan los lotes del mismo producto si coinciden el usuario, la nevera, la unidad, el estado, el vencimiento y el ingrediente opcional. Si una edición hace que el lote coincida con otro, la API responde `409` e indica el lote existente. Si omites la nevera al crear, se usa NEVERA-01. Las alertas se revisan al iniciar el servidor y cada hora mientras está activo, para lotes en nevera que vencen en las próximas 72 horas.
   version: '1.4.0'
@@ -57,8 +57,8 @@ paths:
     post:
       tags: [Usuarios]
       operationId: loginUser
-      summary: Iniciar sesión y obtener un token Bearer de 24 horas
-      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger. Cada cuenta admite una sesión activa. El navegador que ya tiene la cookie válida puede continuar con la misma sesión.
+      summary: Iniciar sesión web u obtener un token Bearer
+      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger. Cada cuenta admite una sesión activa. La sesión vence tras 7 minutos sin actividad. El navegador que ya tiene la cookie válida puede continuar con la misma sesión.
       requestBody:
         required: true
         content:
@@ -83,10 +83,10 @@ paths:
                 sesion_web:
                   type: boolean
                   default: false
-                  description: Si es true, devuelve el perfil y establece una cookie HttpOnly del mismo origen, renovable y con 30 días de inactividad. Swagger usa el Bearer de 24 horas por defecto.
+                  description: Si es true, devuelve el perfil y establece una cookie HttpOnly del mismo origen. Swagger usa Bearer por defecto, con una vigencia máxima de 24 horas y un límite de 7 minutos de inactividad.
       responses:
         "200":
-          description: Sesión iniciada
+          description: Sesión iniciada. El campo data.vence indica la vigencia máxima actual. El campo data.inactividad_restante_ms indica cuánto tiempo queda para que expire la sesión sin actividad adicional.
           content:
             application/json:
               schema:
@@ -97,6 +97,7 @@ paths:
                 data:
                   token: token-de-sesion
                   vence: '2026-11-20T12:00:00Z'
+                  inactividad_restante_ms: 419998
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
@@ -215,14 +216,64 @@ paths:
     get:
       security:
         - bearerAuth: []
+        - sessionCookie: []
       tags: [Usuarios]
       operationId: currentUser
       summary: Consultar el perfil de la sesión y el permiso de administrar catálogos
+      description: Con cookie, esta consulta conserva el plazo de inactividad vigente. Con Bearer, la solicitud autenticada registra actividad.
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
+          description: Perfil obtenido con el tiempo restante antes de que expire la sesión.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      inactividad_restante_ms: { type: integer, minimum: 0, maximum: 420000 }
         "401":
           $ref: '#/components/responses/Unauthorized'
+
+  /api/usuarios/actividad:
+    post:
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      tags: [Usuarios]
+      operationId: recordSessionActivity
+      summary: Registrar una interacción de la sesión activa
+      description: La aplicación web llama a esta operación al detectar una interacción para renovar el plazo de 7 minutos. La cookie requiere una solicitud del mismo origen. Una sesión vencida requiere un nuevo inicio de sesión.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transcurrido_ms:
+                  type: integer
+                  minimum: 0
+                  maximum: 419999
+                  default: 0
+                  description: Milisegundos desde la última interacción.
+      responses:
+        "200":
+          description: Actividad registrada y tiempo restante de la sesión.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                success: true
+                message: Actividad registrada
+                data:
+                  inactividad_restante_ms: 419997
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
 
   /api/usuarios/logout:
     post:
@@ -1212,6 +1263,10 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: nevera_session
   # ------------------------------------------
   # Parámetros de ID reutilizables
   # ------------------------------------------

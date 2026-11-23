@@ -1,7 +1,8 @@
-export async function requestApi(path, method = 'GET', body) {
+export async function requestApi(path, method = 'GET', body, options) {
   let response;
   try {
     response = await fetch('/api' + path, {
+      ...options,
       method,
       credentials: 'same-origin',
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
@@ -90,10 +91,11 @@ export function createModel(request) {
 
   return {
     account: {
-      get: () => read('/usuarios/me'),
+      get: options => request('/usuarios/me', 'GET', undefined, options),
       register: fields => request('/usuarios', 'POST', fields),
       signIn: fields => request('/usuarios/login', 'POST', { ...fields, sesion_web: true }),
       signOut: () => request('/usuarios/logout', 'POST'),
+      reportActivity: transcurrido_ms => request('/usuarios/actividad', 'POST', { transcurrido_ms }, { keepalive: true }),
       recover: email => request('/usuarios/recuperar-contrasena', 'POST', { email }),
       reset: (token, password) => request('/usuarios/restablecer-contrasena', 'POST', { token, password }),
       update: (id, fields) => request(byId('/usuarios', id), 'PUT', fields),

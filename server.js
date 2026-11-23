@@ -183,6 +183,7 @@ const Sesion = mongoose.model('Sesion', new mongoose.Schema({
   usuario: { type: String, required: true },
   credencial: { type: String, required: true },
   web: Boolean,
+  actividad_hasta: { type: Date, required: true, expires: 0 },
   vence: { type: Date, required: true, expires: 0 }
 }, { collection: 'sesiones', versionKey: false }));
 Sesion.schema.index({ usuario: 1, credencial: 1, vence: -1, _id: 1 });
@@ -270,6 +271,7 @@ const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
 
 const DURACION_SESION_MS = 24 * 60 * 60 * 1000;
 const DURACION_SESION_WEB_MS = 30 * DURACION_SESION_MS;
+const INACTIVIDAD_SESION_MS = 7 * 60 * 1000;
 const MENSAJE_SESION_ACTIVA = 'Esta cuenta ya tiene una sesión activa. Cierra esa sesión para iniciar otra.';
 const CLAVE_SEGURA = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,1024}$/;
 const NOMBRE_COOKIE = 'nevera_session';
@@ -303,55 +305,77 @@ function tokenCookie(req) {
   return null;
 }
 
-function buscarSesionActiva(usuario, credencial, ahora) {
-  // Las cuentas que ya tenían varias sesiones conservan la que vence más tarde.
-  return Sesion.findOne({ usuario, credencial, vence: { $gt: ahora } }).sort({ vence: -1, _id: 1 }).lean();
+let migracionSesiones;
+function prepararInactividad() {
+  if (!migracionSesiones) {
+    const ahora = new Date();
+    migracionSesiones = Sesion.updateMany(
+      { actividad_hasta: { $exists: false }, vence: { $gt: ahora } },
+      { $set: { actividad_hasta: new Date(ahora.getTime() + INACTIVIDAD_SESION_MS) } }
+    ).exec().catch(error => {
+      migracionSesiones = undefined;
+      throw error;
+    });
+  }
+  return migracionSesiones;
 }
 
-async function renovarSesionWeb(req, res, token, sesion, ahora) {
-  if (req.method === 'POST' && /^\/usuarios\/logout\/?$/i.test(req.path)) return;
+function filtroSesionVigente(ahora) {
+  return { vence: { $gt: ahora }, actividad_hasta: { $gt: ahora } };
+}
 
-  const restante = sesion.vence.getTime() - ahora.getTime();
-  const renovar = restante <= DURACION_SESION_WEB_MS - DURACION_SESION_MS;
-  if (!renovar && req.path !== '/usuarios/me') return;
+function buscarSesionActiva(usuario, credencial, ahora) {
+  // Las cuentas que ya tenían varias sesiones conservan la que vence más tarde.
+  return Sesion.findOne({ usuario, credencial, ...filtroSesionVigente(ahora) }).sort({ vence: -1, _id: 1 }).lean();
+}
 
-  let vence = sesion.vence;
-  if (renovar) {
-    const nuevaFecha = new Date(ahora.getTime() + DURACION_SESION_WEB_MS);
-    const renovada = await Sesion.findOneAndUpdate(
-      { _id: sesion._id, vence: { $gt: ahora } },
-      { $max: { vence: nuevaFecha } },
-      { returnDocument: 'after' }
-    ).select('vence').lean();
-    if (!renovada) return;
-    vence = renovada.vence;
+function extenderActividad(sesion, ahora, transcurridoMs = 0) {
+  const fechas = { actividad_hasta: new Date(ahora.getTime() + INACTIVIDAD_SESION_MS - transcurridoMs) };
+  if (sesion.web === true && sesion.vence - ahora <= DURACION_SESION_WEB_MS - DURACION_SESION_MS) {
+    fechas.vence = new Date(ahora.getTime() + DURACION_SESION_WEB_MS);
   }
-  escribirCookieSesion(req, res, token, vence);
+  return Sesion.findOneAndUpdate(
+    { _id: sesion._id, ...filtroSesionVigente(ahora) },
+    { $max: fechas },
+    { returnDocument: 'after' }
+  ).lean();
+}
+
+function tiempoRestanteSesion(sesion) {
+  return Math.max(0, Math.min(sesion.vence.getTime(), sesion.actividad_hasta.getTime()) - Date.now());
+}
+
+function rechazarSesion(req, res) {
+  if (req.sesionWeb) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
+  res.set('WWW-Authenticate', 'Bearer');
+  throw new ApiError(401, 'Inicia sesión y proporciona un token válido');
 }
 
 async function autenticar(req, res, next) {
   res.set('Cache-Control', 'no-store');
   const autorizacion = req.get('authorization');
   const token = autorizacion === undefined ? tokenCookie(req) : /^Bearer ([a-f0-9]{64})$/i.exec(autorizacion)?.[1];
-  const sesionWeb = autorizacion === undefined && !!token;
-  if (sesionWeb && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) exigirOrigenWeb(req);
+  req.sesionWeb = autorizacion === undefined && !!token;
+  if (!token) rechazarSesion(req, res);
+  if (req.sesionWeb && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) exigirOrigenWeb(req);
+  await prepararInactividad();
   const ahora = new Date();
-  const sesion = token && await Sesion.findOne({ _id: huella(token), vence: { $gt: ahora } }).lean();
+  const sesion = await Sesion.findOne({ _id: huella(token), ...filtroSesionVigente(ahora) }).lean();
   const [usuario, activa] = typeof sesion?.credencial === 'string' ? await Promise.all([
     Usuario.findById(sesion.usuario).select('+password_hash').lean(),
     buscarSesionActiva(sesion.usuario, sesion.credencial, ahora)
   ]) : [];
   const credencialValida = typeof usuario?.password_hash === 'string' && huella(usuario.password_hash) === sesion.credencial;
-  if (!credencialValida || activa?._id !== sesion._id) {
-    if (sesionWeb) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
-    res.set('WWW-Authenticate', 'Bearer');
-    throw new ApiError(401, 'Inicia sesión y proporciona un token válido');
-  }
+  if (!credencialValida || activa?._id !== sesion._id) rechazarSesion(req, res);
+
   req.usuarioId = usuario._id;
   req.usuario = usuario;
-  req.sesionWeb = sesionWeb;
-  req.sesionId = activa._id;
-  if (sesionWeb && activa.web === true) await renovarSesionWeb(req, res, token, activa, ahora);
+  req.sesion = activa;
+  const operacionSesion = req.method === 'POST' && /^\/usuarios\/(?:actividad|logout)\/?$/i.test(req.path);
+  if (!req.sesionWeb && activa.web !== true && !operacionSesion) {
+    req.sesion = await extenderActividad(activa, new Date());
+    if (!req.sesion) rechazarSesion(req, res);
+  }
   next();
 }
 
@@ -496,14 +520,15 @@ app.post('/api/usuarios/login', async (req, res) => {
   const web = sesion_web === true;
   const tokenActual = web ? tokenCookie(req) : null;
   const credencial = huella(usuario.password_hash);
-  const { token, vence } = await enTransaccion(async () => {
+  await prepararInactividad();
+  const { token, sesion } = await enTransaccion(async () => {
     const ahora = new Date();
     const usuarioVigente = await Usuario.exists({ _id: usuario._id, password_hash: usuario.password_hash });
     if (!usuarioVigente) throw new ApiError(401, 'Vuelve a iniciar sesión');
     const activa = await buscarSesionActiva(usuario._id, credencial, ahora);
     if (activa) {
       if (activa.web === true && tokenActual && huella(tokenActual) === activa._id) {
-        return { token: tokenActual, vence: activa.vence };
+        return { token: tokenActual, sesion: await extenderActividad(activa, ahora) };
       }
       throw new ApiError(409, MENSAJE_SESION_ACTIVA);
     }
@@ -511,16 +536,21 @@ app.post('/api/usuarios/login', async (req, res) => {
     await Sesion.deleteMany({ usuario: usuario._id });
     const nuevoToken = randomBytes(32).toString('hex');
     const duracion = web ? DURACION_SESION_WEB_MS : DURACION_SESION_MS;
-    const vencimiento = new Date(ahora.getTime() + duracion);
-    await Sesion.create({ _id: huella(nuevoToken), usuario: usuario._id, credencial, vence: vencimiento, web });
-    return { token: nuevoToken, vence: vencimiento };
+    const nueva = await Sesion.create({
+      _id: huella(nuevoToken), usuario: usuario._id, credencial, web,
+      vence: new Date(ahora.getTime() + duracion),
+      actividad_hasta: new Date(ahora.getTime() + INACTIVIDAD_SESION_MS)
+    });
+    return { token: nuevoToken, sesion: nueva };
   });
+  if (!sesion) throw new ApiError(401, 'Vuelve a iniciar sesión');
+  const datos = { vence: sesion.vence, inactividad_restante_ms: tiempoRestanteSesion(sesion) };
   res.set('Cache-Control', 'no-store');
   if (web) {
-    escribirCookieSesion(req, res, token, vence);
-    return res.status(200).json(responseFormat(true, 'Sesión iniciada', { perfil: perfilWeb(usuario), vence }));
+    escribirCookieSesion(req, res, token, sesion.vence);
+    return res.status(200).json(responseFormat(true, 'Sesión iniciada', { perfil: perfilWeb(usuario), ...datos }));
   }
-  res.status(200).json(responseFormat(true, 'Sesión iniciada', { token, vence }));
+  res.status(200).json(responseFormat(true, 'Sesión iniciada', { token, ...datos }));
 });
 
 const RECUPERACION_DURACION_MS = 30 * 60 * 1000;
@@ -619,14 +649,28 @@ function perfilWeb(usuario) {
 }
 
 app.get('/api/usuarios/me', (req, res) => {
-  res.status(200).json(responseFormat(true, 'Perfil obtenido', perfilWeb(req.usuario)));
+  res.status(200).json({
+    ...responseFormat(true, 'Perfil obtenido', perfilWeb(req.usuario)),
+    inactividad_restante_ms: tiempoRestanteSesion(req.sesion)
+  });
+});
+
+app.post('/api/usuarios/actividad', async (req, res) => {
+  const { transcurrido_ms: transcurridoMs = 0 } = req.body ?? {};
+  if (!Number.isSafeInteger(transcurridoMs) || transcurridoMs < 0 || transcurridoMs >= INACTIVIDAD_SESION_MS) {
+    throw new ApiError(400, 'Envía el tiempo transcurrido desde la última interacción en milisegundos.');
+  }
+  const sesion = await extenderActividad(req.sesion, new Date(), transcurridoMs);
+  if (!sesion) rechazarSesion(req, res);
+  if (req.sesionWeb && sesion.vence > req.sesion.vence) escribirCookieSesion(req, res, tokenCookie(req), sesion.vence);
+  res.status(200).json(responseFormat(true, 'Actividad registrada', { inactividad_restante_ms: tiempoRestanteSesion(sesion) }));
 });
 
 app.post('/api/usuarios/logout', async (req, res) => {
   await enTransaccion(async () => {
     const credencial = huella(req.usuario.password_hash);
     const activa = await buscarSesionActiva(req.usuarioId, credencial, new Date());
-    if (activa?._id === req.sesionId) {
+    if (activa?._id === req.sesion._id) {
       await Sesion.deleteMany({ usuario: req.usuarioId, credencial });
     }
   });
@@ -1478,6 +1522,7 @@ function iniciarAlertas() {
 }
 
 conexion.then(iniciarAlertas).catch(() => {});
+conexion.then(prepararInactividad).catch(() => {});
 
 // Inicialización del Servidor
 const PORT = process.env.PORT || 3000;

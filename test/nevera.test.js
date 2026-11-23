@@ -8,7 +8,7 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server-core');
 const { mongo: { MongoClient } } = require('mongoose');
 const { chromium } = require('playwright');
 const { configurarCorreo } = require('../correo-recuperacion');
-const { huella } = require('../credenciales');
+const { huella, protegerClave } = require('../credenciales');
 
 const raiz = path.resolve(__dirname, '..');
 const clave = 'PruebaNevera2026!';
@@ -18,6 +18,8 @@ const idAdminLocal = '7010';
 const idUsuario = '7002';
 const idCuenta = '7003';
 const idBorrado = '7004';
+const inactividadMs = 7 * 60 * 1000;
+const sesionLegada = { id: '7012', web: 'a'.repeat(64), bearer: 'b'.repeat(64) };
 const catalogo = [
   ['categorias', { _id: 'Lácteos' }],
   ['marcas', { _id: 'Marca de prueba' }],
@@ -71,8 +73,8 @@ async function detenerProceso(proceso) {
   await cierre;
 }
 
-async function api(ruta, { method = 'GET', body, token, cookie } = {}) {
-  const headers = new Headers({ Origin: baseUrl });
+async function api(ruta, { method = 'GET', body, token, cookie, origin = baseUrl } = {}) {
+  const headers = new Headers({ Origin: origin });
   if (body !== undefined) headers.set('Content-Type', 'application/json');
   if (token) headers.set('Authorization', 'Bearer ' + token);
   if (cookie) headers.set('Cookie', cookie);
@@ -125,6 +127,20 @@ const agregar = (body, auth = usuario) => correcto('/inventario', {
 before(async () => {
   replica = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   mongoUri = replica.getUri('nevera_test');
+  const cliente = await new MongoClient(mongoUri).connect();
+  try {
+    const { id, nombre, email } = datosCuenta(sesionLegada.id);
+    const password_hash = await protegerClave(clave);
+    const db = cliente.db();
+    await db.collection('usuarios').insertOne({ _id: id, nombre, email, password_hash });
+    const credencial = huella(password_hash);
+    await db.collection('sesiones').insertMany([
+      { _id: huella(sesionLegada.web), usuario: id, credencial, web: true, vence: new Date(Date.now() + 480_000) },
+      { _id: huella(sesionLegada.bearer), usuario: id, credencial, web: false, vence: new Date(Date.now() + 3_600_000) }
+    ]);
+  } finally {
+    await cliente.close();
+  }
   const gmail = 'data:text/javascript,' + encodeURIComponent('(' + simularGmail.toString() + ')()');
   servidor = spawn(process.execPath, ['--import', gmail, 'server.js'], {
     cwd: raiz,
@@ -301,20 +317,16 @@ test('Dos inicios simultáneos de la misma cuenta solo crean una sesión entre w
 });
 
 test('Las sesiones anteriores conservan una sola sesión y los registros vencidos liberan el acceso', async () => {
-  const id = '7012';
-  await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
-  const primera = 'a'.repeat(64);
-  const segunda = 'b'.repeat(64);
+  const { id, web: primera, bearer: segunda } = sesionLegada;
   const cliente = await new MongoClient(mongoUri).connect();
   try {
-    const db = cliente.db();
-    const { password_hash } = await db.collection('usuarios').findOne({ _id: id });
-    const credencial = huella(password_hash);
-    const sesiones = db.collection('sesiones');
-    await sesiones.insertMany([
-      { _id: huella(primera), usuario: id, credencial, web: true, vence: new Date(Date.now() + 60_000) },
-      { _id: huella(segunda), usuario: id, credencial, web: false, vence: new Date(Date.now() + 120_000) }
-    ]);
+    const sesiones = cliente.db().collection('sesiones');
+    const anteriores = await sesiones.find({ usuario: id }).toArray();
+    assert.equal(anteriores.length, 2);
+    for (const anterior of anteriores) {
+      const restante = anterior.actividad_hasta.getTime() - Date.now();
+      assert.ok(restante > 0 && restante <= inactividadMs);
+    }
     assert.equal((await api('/usuarios/me', { cookie: 'nevera_session=' + primera })).status, 401);
     assert.equal((await correcto('/usuarios/me', { token: segunda }))._id, id);
     await cerrarSesion({ token: segunda });
@@ -327,6 +339,52 @@ test('Las sesiones anteriores conservan una sola sesión y los registros vencido
   } finally {
     await cliente.close();
   }
+});
+
+test('La inactividad vence en siete minutos, ignora consultas web automáticas y libera la cuenta', async t => {
+  const id = '7014';
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
+  const inicio = await api('/usuarios/login', { method: 'POST', body: { id, password: clave, sesion_web: true } });
+  assert.equal(inicio.status, 200);
+  assert.ok(inicio.data.inactividad_restante_ms <= inactividadMs && inicio.data.inactividad_restante_ms > 419_000);
+  const web = { cookie: inicio.cookie };
+  const cliente = await new MongoClient(mongoUri).connect();
+  t.after(() => cliente.close());
+  const sesiones = cliente.db().collection('sesiones');
+  const sesionWeb = { _id: huella(inicio.cookie.split('=')[1]) };
+  const anterior = new Date(Date.now() + 20_000);
+  await sesiones.updateOne(sesionWeb, { $set: { actividad_hasta: anterior } });
+
+  const perfil = await api('/usuarios/me', web);
+  assert.equal(perfil.data._id, id);
+  assert.ok(perfil.inactividad_restante_ms <= 20_000);
+  await correcto('/notificaciones', web);
+  const registrar = opciones => api('/usuarios/actividad', { ...web, method: 'POST', ...opciones });
+  assert.equal((await registrar({ origin: 'https://otro.example' })).status, 403);
+  assert.equal((await registrar({ body: { transcurrido_ms: inactividadMs } })).status, 400);
+  assert.deepEqual((await sesiones.findOne(sesionWeb)).actividad_hasta, anterior);
+
+  const actividad = await registrar({ body: { transcurrido_ms: 2000 } });
+  assert.equal(actividad.status, 200);
+  assert.ok(actividad.data.inactividad_restante_ms <= 418_000 && actividad.data.inactividad_restante_ms > 417_000);
+
+  await sesiones.updateOne(sesionWeb, { $set: { actividad_hasta: new Date(Date.now() - 1) } });
+  assert.equal((await registrar({})).status, 401);
+  assert.equal((await api('/notificaciones', web)).status, 401);
+
+  const bearer = await sesion(id);
+  const sesionBearer = { _id: huella(bearer.token) };
+  const limite = new Date(Date.now() + 240_000);
+  await sesiones.updateOne(sesionBearer, { $set: { actividad_hasta: anterior, vence: limite } });
+  const perfilBearer = await api('/usuarios/me', bearer);
+  assert.equal(perfilBearer.data._id, id);
+  assert.ok(perfilBearer.inactividad_restante_ms <= 240_000 && perfilBearer.inactividad_restante_ms > 239_000);
+  const tokenRenovado = await sesiones.findOne(sesionBearer);
+  assert.ok(tokenRenovado.actividad_hasta > anterior);
+  assert.deepEqual(tokenRenovado.vence, limite);
+  await sesiones.updateOne(sesionBearer, { $set: { actividad_hasta: new Date(Date.now() - 1) } });
+  assert.equal((await api('/usuarios/me', bearer)).status, 401);
+  assert.ok((await sesion(id, true)).cookie);
 });
 
 test('Cambiar correo o contraseña requiere la contraseña actual con Bearer y con cookie', async () => {
@@ -565,6 +623,42 @@ test('Un segundo navegador muestra el bloqueo hasta que el primero cierra sesió
   await primero.getByRole('button', { name: 'Cerrar sesión' }).click();
   await primero.locator('#login').waitFor();
   await entrar(segundo, id);
+});
+
+test('La inactividad cierra la vista tras siete minutos y usar el teclado reinicia el plazo', { timeout: 35_000 }, async t => {
+  const id = '7015';
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
+  const navegador = await abrirNavegador(t);
+  const pagina = await navegador.newPage();
+  await pagina.clock.install();
+  await entrar(pagina, id);
+  await pagina.getByText('Avisos sin leer', { exact: true }).waitFor();
+
+  const cookie = (await pagina.context().cookies()).find(item => item.name === 'nevera_session');
+  assert.ok(cookie);
+  const cliente = await new MongoClient(mongoUri).connect();
+  t.after(() => cliente.close());
+  const sesiones = cliente.db().collection('sesiones');
+  const filtro = { _id: huella(cookie.value) };
+  const antes = await sesiones.findOne(filtro);
+  const aviso = pagina.waitForResponse('**/api/notificaciones');
+  await pagina.clock.fastForward(60_000);
+  assert.equal((await aviso).status(), 200);
+  assert.deepEqual((await sesiones.findOne(filtro)).actividad_hasta, antes.actividad_hasta);
+
+  const actividad = pagina.waitForResponse('**/api/usuarios/actividad');
+  await pagina.keyboard.press('Tab');
+  assert.equal((await actividad).status(), 200);
+  assert.ok((await sesiones.findOne(filtro)).actividad_hasta > antes.actividad_hasta);
+
+  await pagina.clock.fastForward(inactividadMs - 2_000);
+  assert.ok(await pagina.locator('#dashboard').isVisible());
+  await sesiones.updateOne(filtro, { $set: { actividad_hasta: new Date(Date.now() - 1) } });
+  await pagina.clock.fastForward(3_000);
+  await pagina.getByText(/Tu sesión se cerró tras 7 minutos de inactividad/).waitFor();
+  assert.ok(await pagina.locator('#login').isVisible());
+  assert.ok(await pagina.locator('#dashboard').isHidden());
+  await entrar(await navegador.newPage(), id);
 });
 
 test('El menú táctil horizontal funciona e Inicio sigue disponible cuando fallan los avisos', { timeout: 35_000 }, async t => {
