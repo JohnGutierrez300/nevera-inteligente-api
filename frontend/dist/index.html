@@ -124,10 +124,17 @@
         <div><p class="eyebrow">Mi nevera</p><h1 id="view-title">Inventario</h1></div>
         <div class="heading-actions">
           <button id="add" class="primary button-add">Agregar lote</button>
-          <button id="notification-bell" class="secondary notification-bell" type="button" aria-label="Abrir notificaciones" title="Notificaciones">
-            <span class="bell-icon" aria-hidden="true"></span>
-            <span class="bell-count" id="bell-count" aria-hidden="true" hidden></span>
-          </button>
+          <div class="notification-control">
+            <button id="notification-bell" class="secondary notification-bell" type="button" aria-label="Abrir notificaciones" title="Notificaciones" aria-expanded="false" aria-controls="notification-preview">
+              <span class="bell-icon" aria-hidden="true"></span>
+              <span class="bell-count" id="bell-count" aria-hidden="true" hidden></span>
+            </button>
+            <section id="notification-preview" class="notification-preview" aria-labelledby="notification-preview-heading" hidden>
+              <h2 id="notification-preview-heading">Notificaciones recientes</h2>
+              <div id="notification-preview-list" class="notification-preview-list" aria-live="polite"></div>
+              <button id="notification-preview-open" class="primary" type="button">Ver notificaciones</button>
+            </section>
+          </div>
         </div>
       </header>
       <p id="notification-announcer" class="visually-hidden" role="status" aria-atomic="true"></p>

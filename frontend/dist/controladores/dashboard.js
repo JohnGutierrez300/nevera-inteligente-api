@@ -3,7 +3,7 @@ import { notice } from '../vistas/componentes.js';
 import { catalogs, createDashboardView } from '../vistas/dashboard.js';
 
 const historyPageSize = 20;
-const unreadCount = items => items.filter(item => !item.leida).length;
+const alertsPageSize = 20;
 
 export function createDashboardController({
   model, dialogs, getProfile, getGeneration, navigate, reload, openLotDetail,
@@ -13,6 +13,9 @@ export function createDashboardController({
   let catalog = 'productos';
   let notificationRequest = 0;
   let homeSummary;
+  let lastSummary;
+  let alertsRevision;
+  let alertsPage = 1;
 
   function edit(form, save) {
     if (!getProfile()) return;
@@ -49,12 +52,13 @@ export function createDashboardController({
   async function loadNotifications() {
     const profile = getProfile();
     const generation = ++notificationRequest;
-    const items = await model.notifications.list();
+    const summary = await model.notifications.summary(lastSummary?.revision);
     if (profile && profile === getProfile() && generation === notificationRequest) {
-      onNotifications(items);
-      if (homeSummary?.node.isConnected) homeSummary.showUnread(unreadCount(items));
+      lastSummary = { ...lastSummary, ...summary };
+      onNotifications(lastSummary);
+      if (homeSummary?.node.isConnected) homeSummary.showUnread(summary.sin_leer);
     }
-    return items;
+    return summary;
   }
 
   async function home() {
@@ -72,7 +76,7 @@ export function createDashboardController({
       onViewLot: openLotDetail
     });
     if (generation === getGeneration()) homeSummary = summary;
-    void notifications.then(items => summary.showUnread(items ? unreadCount(items) : null));
+    void notifications.then(result => summary.showUnread(result?.sin_leer ?? null));
     return summary.node;
   }
 
@@ -117,9 +121,31 @@ export function createDashboardController({
     });
   }
 
-  async function alerts() {
-    const items = await loadNotifications();
-    return view.alerts(items, {
+  async function alerts(background) {
+    const generation = getGeneration();
+    const currentRevision = lastSummary?.revision;
+    const filters = view.getAlertFilters();
+    if (!background) void loadNotifications().catch(() => {});
+    const list = pagina => model.notifications.list({ ...filters, pagina, limite: alertsPageSize });
+    let page = alertsPage;
+    let result = await list(page);
+    if (!result.data.length && page > 1) {
+      page--;
+      result = await list(page);
+    }
+    if (generation === getGeneration()) {
+      alertsPage = page;
+      alertsRevision = currentRevision;
+    }
+    return view.alerts(result.data, result.paginacion, {
+      onFilter() {
+        alertsPage = 1;
+        void reload();
+      },
+      onPage(change) {
+        alertsPage += change;
+        void reload();
+      },
       onToggle: (item, setBusy) => mutate(() => model.notifications.setRead(item._id, !item.leida), setBusy),
       onDelete: id => remove('¿Eliminar esta notificación?', 'Se eliminará este aviso de tu bandeja.',
         'Eliminar aviso', () => model.notifications.remove(id)),
@@ -218,5 +244,19 @@ export function createDashboardController({
   }
 
   const loaders = { home, plans, alerts, history, catalog: directory, profile };
-  return { load: name => loaders[name](), loadNotifications, resetAlertFilters: view.resetAlertFilters };
+  return {
+    load: (name, background) => loaders[name](background),
+    loadNotifications,
+    alertsNeedRefresh: () => !!lastSummary && alertsRevision !== lastSummary.revision,
+    resetAlertFilters() {
+      alertsPage = 1;
+      view.resetAlertFilters();
+    },
+    resetNotifications() {
+      notificationRequest++;
+      lastSummary = homeSummary = alertsRevision = undefined;
+      alertsPage = 1;
+      view.resetAlertFilters();
+    }
+  };
 }

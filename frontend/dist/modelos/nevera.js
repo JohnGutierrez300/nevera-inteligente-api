@@ -117,7 +117,13 @@ export function createModel(request) {
       remove: id => remove('/meal_preps', id)
     },
     notifications: {
-      list: () => read('/notificaciones'),
+      summary: revision => read('/notificaciones/resumen' + (revision === undefined ? '' : '?' + new URLSearchParams({ revision }))),
+      list({ pagina, limite, tipo, lectura }) {
+        const params = new URLSearchParams({ pagina, limite });
+        if (tipo) params.set('tipo', tipo);
+        if (lectura) params.set('lectura', lectura);
+        return request('/notificaciones?' + params);
+      },
       setRead: (id, leida) => request(byId('/notificaciones', id), 'PATCH', { leida }),
       remove: id => remove('/notificaciones', id)
     },

@@ -67,18 +67,18 @@ export function createNotificationAlerts({ showUnread, announce }) {
       key = `nevera.notificaciones.${accountId}`;
       known = rememberedIds(key);
     },
-    sync(items) {
+    sync({ sin_leer, recientes = [] }) {
       if (!key) return;
-      const unread = items.filter(item => !item.leida);
-      showUnread(unread.length);
-      if (!unread.length) sound.clear();
+      showUnread(sin_leer);
+      if (!sin_leer) sound.clear();
       if (document.hidden) return;
 
-      const newItems = items.filter(item => !known.has(item._id));
-      if (!newItems.length && items.length === known.size) return;
+      const newItems = recientes.filter(item => !known.has(item._id));
+      if (!newItems.length) return;
       const shared = rememberedIds(key);
-      const fresh = newItems.filter(item => !item.leida && !shared.has(item._id));
-      known = new Set(items.map(item => item._id));
+      const fresh = newItems.filter(item => !item.leida && !item.desactualizada && !shared.has(item._id));
+      for (const id of shared) known.add(id);
+      for (const item of newItems) known.add(item._id);
       try {
         localStorage.setItem(key, JSON.stringify([...known]));
       } catch {

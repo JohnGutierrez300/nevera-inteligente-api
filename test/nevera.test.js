@@ -5,7 +5,7 @@ const path = require('node:path');
 const { after, before, test } = require('node:test');
 const { setTimeout: pause } = require('node:timers/promises');
 const { MongoMemoryReplSet } = require('mongodb-memory-server-core');
-const { mongo: { MongoClient } } = require('mongoose');
+const { mongo: { MongoClient, ObjectId } } = require('mongoose');
 const { chromium } = require('playwright');
 const { configurarCorreo } = require('../correo-recuperacion');
 const { huella, protegerClave } = require('../credenciales');
@@ -15,6 +15,9 @@ const clave = 'PruebaNevera2026!';
 const otraClave = 'PruebaNevera2030!';
 const idAdmin = '7001';
 const idAdminLocal = '7010';
+const idAdminReservado = '7090';
+const idAvisos = '7017';
+const lotesAvisados = { editar: new ObjectId(), eliminar: new ObjectId() };
 const idUsuario = '7002';
 const idCuenta = '7003';
 const idBorrado = '7004';
@@ -84,6 +87,7 @@ async function api(ruta, { method = 'GET', body, token, cookie, origin = baseUrl
   return {
     status: respuesta.status,
     cookie: respuesta.headers.get('set-cookie')?.split(';')[0],
+    retryAfter: respuesta.headers.get('retry-after'),
     ...(await respuesta.json())
   };
 }
@@ -129,15 +133,28 @@ before(async () => {
   mongoUri = replica.getUri('nevera_test');
   const cliente = await new MongoClient(mongoUri).connect();
   try {
-    const { id, nombre, email } = datosCuenta(sesionLegada.id);
     const password_hash = await protegerClave(clave);
     const db = cliente.db();
-    await db.collection('usuarios').insertOne({ _id: id, nombre, email, password_hash });
+    await db.collection('usuarios').insertMany([idAdmin, idAdminLocal, idAvisos, sesionLegada.id].map(id => {
+      const { nombre, email } = datosCuenta(id);
+      return { _id: id, nombre, email, password_hash };
+    }));
     const credencial = huella(password_hash);
     await db.collection('sesiones').insertMany([
-      { _id: huella(sesionLegada.web), usuario: id, credencial, web: true, vence: new Date(Date.now() + 480_000) },
-      { _id: huella(sesionLegada.bearer), usuario: id, credencial, web: false, vence: new Date(Date.now() + 3_600_000) }
+      { _id: huella(sesionLegada.web), usuario: sesionLegada.id, credencial, web: true, vence: new Date(Date.now() + 480_000) },
+      { _id: huella(sesionLegada.bearer), usuario: sesionLegada.id, credencial, web: false, vence: new Date(Date.now() + 3_600_000) }
     ]);
+    const manana = new Date(Date.now() + 19 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const fecha_vencimiento = new Date(manana + 'T20:00:00-05:00');
+    await db.collection('inventario').insertMany(Object.entries(lotesAvisados).map(([nevera_id, _id]) => ({
+      ...loteBase, _id, user_nombre: idAvisos, nevera_id, fecha_vencimiento, estado: 'EN_NEVERA'
+    })));
+    const fechaVieja = new Date(fecha_vencimiento.getTime() - 3_600_000);
+    await db.collection('notificaciones').insertOne({
+      user_nombre: idAvisos, nevera_id: 'editar', inventario_id: lotesAvisados.editar, tipo: 'VENCIMIENTO',
+      fecha: new Date(), fecha_vencimiento: fechaVieja, leida: false,
+      mensaje: 'Leche vence el ' + fechaVieja.toISOString() + ' en la nevera editar.'
+    });
   } finally {
     await cliente.close();
   }
@@ -145,7 +162,7 @@ before(async () => {
   servidor = spawn(process.execPath, ['--import', gmail, 'server.js'], {
     cwd: raiz,
     env: {
-      ...process.env, PORT: '0', MONGO_URI: mongoUri, CATALOG_ADMIN_IDS: [idAdmin, idAdminLocal].join(','),
+      ...process.env, PORT: '0', MONGO_URI: mongoUri, CATALOG_ADMIN_IDS: [idAdmin, idAdminLocal, idAdminReservado].join(','),
       GMAIL_USER: 'nevera@example.test', GMAIL_APP_PASSWORD: '', GMAIL_CLIENT_ID: 'cliente-de-prueba',
       GMAIL_CLIENT_SECRET: 'secreto-de-prueba', GMAIL_REFRESH_TOKEN: 'actualizacion-de-prueba',
       PASSWORD_RESET_URL: '', RENDER_EXTERNAL_URL: 'https://nevera-prueba.example', DOTENV_CONFIG_QUIET: 'true'
@@ -161,7 +178,7 @@ before(async () => {
   baseUrl = 'http://127.0.0.1:' + inicio[1];
   await esperar(async () => (await api('/salud')).status === 200, 'MongoDB de prueba no está disponible.');
 
-  for (const id of [idAdmin, idUsuario, idCuenta, idBorrado]) {
+  for (const id of [idUsuario, idCuenta, idBorrado]) {
     await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
   }
   admin = await sesion(idAdmin);
@@ -174,6 +191,80 @@ before(async () => {
 after(async () => {
   await detenerProceso(servidor);
   await replica?.stop();
+});
+
+test('El registro reserva los IDs de administrador y el ingreso limita los fallos de una cuenta', async t => {
+  const reservado = await api('/usuarios', { method: 'POST', body: datosCuenta(idAdminReservado) });
+  assert.equal(reservado.status, 403);
+  assert.match(reservado.message, /reservado/);
+
+  const id = '7018';
+  const cuenta = datosCuenta(id);
+  await correcto('/usuarios', { method: 'POST', body: cuenta });
+  const entrar = body => api('/usuarios/login', { method: 'POST', body });
+  for (let intento = 0; intento < 5; intento++) {
+    const identificador = intento % 2 ? { id } : { nombre: cuenta.nombre };
+    assert.equal((await entrar({ ...identificador, password: otraClave })).status, 401);
+  }
+  const limitado = await entrar({ id, password: clave });
+  assert.equal(limitado.status, 429);
+  assert.ok(Number(limitado.retryAfter) > 0 && Number(limitado.retryAfter) <= 300);
+
+  const cliente = await new MongoClient(mongoUri).connect();
+  t.after(() => cliente.close());
+  const { password_hash } = await cliente.db().collection('usuarios').findOne({ _id: id });
+  await cliente.db().collection('intentos_ingreso').updateOne({ _id: huella(`${id}:${password_hash}`) },
+    { $set: { vence: new Date(0) } });
+  assert.equal((await entrar({ nombre: cuenta.nombre, password: clave })).status, 200);
+});
+
+test('Los cuerpos incompletos de productos, patrones y notificaciones devuelven 400', async () => {
+  for (const [ruta, campo] of [['productos', 'nombre'], ['patrones_predictivos', '_id'], ['notificaciones', 'mensaje']]) {
+    for (const body of [undefined, {}, []]) {
+      const respuesta = await api('/' + ruta, { ...admin, method: 'POST', body });
+      assert.equal(respuesta.status, 400, ruta);
+      assert.equal(respuesta.success, false);
+      if (body && !Array.isArray(body)) assert.ok(respuesta.message.includes(campo));
+    }
+  }
+});
+
+test('El resumen pagina avisos vigentes y conserva el historial al editar o eliminar los lotes', async () => {
+  const auth = await sesion(idAvisos);
+  const inicial = await esperar(async () => {
+    const resumen = await correcto('/notificaciones/resumen', auth);
+    return resumen.sin_leer === 2 ? resumen : null;
+  }, 'La revisión inicial no generó los dos avisos vigentes.');
+  assert.equal(inicial.recientes.length, 3);
+  const anterior = inicial.recientes.find(item => item.desactualizada);
+  assert.ok(anterior);
+  assert.match(anterior.mensaje, /19:00/);
+  assert.ok(inicial.recientes.filter(item => !item.desactualizada).every(item => /20:00.*hora de Colombia/.test(item.mensaje)));
+  assert.deepEqual(await correcto('/notificaciones/resumen?revision=' + inicial.revision, auth),
+    { revision: inicial.revision, sin_leer: 2 });
+  const pagina = await api('/notificaciones?pagina=1&limite=1&lectura=sin_leer&tipo=VENCIMIENTO', auth);
+  assert.equal(pagina.status, 200);
+  assert.equal(pagina.data.length, 1);
+  assert.equal(pagina.data[0].desactualizada, false);
+  assert.deepEqual(pagina.paginacion, { pagina: 1, limite: 1, hay_siguiente: true });
+
+  const editar = '/inventario/' + lotesAvisados.editar;
+  await correcto(editar, { ...auth, method: 'PUT', body: { cantidad: 2 } });
+  assert.equal((await correcto('/notificaciones/resumen', auth)).revision, inicial.revision);
+  const fecha_vencimiento = new Date(Date.now() + 4 * 86_400_000).toISOString();
+  await correcto(editar, { ...auth, method: 'PUT', body: { fecha_vencimiento } });
+  const trasEditar = await correcto('/notificaciones/resumen?revision=' + inicial.revision, auth);
+  assert.equal(trasEditar.sin_leer, 1);
+  assert.equal(trasEditar.revision, inicial.revision + 1);
+  assert.equal(trasEditar.recientes.filter(item => item.desactualizada).length, 2);
+
+  await correcto('/inventario/' + lotesAvisados.eliminar, { ...auth, method: 'DELETE' });
+  const trasEliminar = await correcto('/notificaciones/resumen', auth);
+  assert.equal(trasEliminar.sin_leer, 0);
+  assert.ok(trasEliminar.recientes.every(item => item.desactualizada));
+  assert.equal((await correcto('/notificaciones', auth)).length, 3);
+  assert.deepEqual(await correcto('/notificaciones?lectura=sin_leer', auth), []);
+  await cerrarSesion(auth);
 });
 
 test('Un alta simultánea acumula la cantidad y una edición duplicada se revierte', async () => {
@@ -641,7 +732,7 @@ test('La inactividad cierra la vista tras siete minutos y usar el teclado reinic
   const sesiones = cliente.db().collection('sesiones');
   const filtro = { _id: huella(cookie.value) };
   const antes = await sesiones.findOne(filtro);
-  const aviso = pagina.waitForResponse('**/api/notificaciones');
+  const aviso = pagina.waitForResponse('**/api/notificaciones/resumen*');
   await pagina.clock.fastForward(60_000);
   assert.equal((await aviso).status(), 200);
   assert.deepEqual((await sesiones.findOne(filtro)).actividad_hasta, antes.actividad_hasta);
@@ -667,7 +758,7 @@ test('El menú táctil horizontal funciona e Inicio sigue disponible cuando fall
   const navegador = await abrirNavegador(t);
   const pagina = await navegador.newPage({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true });
   const responderAvisos = Promise.withResolvers();
-  await pagina.route('**/api/notificaciones', async route => {
+  await pagina.route('**/api/notificaciones/resumen*', async route => {
     await responderAvisos.promise;
     await route.fulfill({ status: 503, json: { success: false, message: 'Avisos no disponibles' } });
   });
@@ -688,7 +779,7 @@ test('El menú táctil horizontal funciona e Inicio sigue disponible cuando fall
   await pagina.getByRole('heading', { name: 'Inventario', exact: true }).waitFor();
 });
 
-test('La campana y el sonido anuncian avisos nuevos al entrar y durante la sesión, sin repetirlos', { timeout: 45_000 }, async t => {
+test('La campana ofrece vista previa y la bandeja abierta se actualiza con sus filtros', { timeout: 45_000 }, async t => {
   const id = '7016';
   await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
   const bearer = await sesion(id);
@@ -728,31 +819,53 @@ test('La campana y el sonido anuncian avisos nuevos al entrar y durante la sesi�
   await toast.getByText(nuevo.mensaje, { exact: true }).waitFor();
   await pagina.waitForFunction(() => window.tonosNotificacion === 4);
   assert.equal(await pagina.locator('.metric-card').filter({ hasText: 'Avisos sin leer' }).locator('strong').textContent(), '2');
-  await pagina.getByRole('button', { name: 'Abrir notificaciones, 2 sin leer', exact: true }).click();
+  const campanaConDos = pagina.getByRole('button', { name: 'Abrir notificaciones, 2 sin leer', exact: true });
+  const vistaPrevia = pagina.getByRole('region', { name: 'Notificaciones recientes' });
+  await campanaConDos.click();
+  await vistaPrevia.getByText(nuevo.mensaje, { exact: true }).waitFor();
+  assert.ok(await pagina.getByRole('heading', { name: 'Inicio', exact: true }).isVisible());
+  await pagina.keyboard.press('Escape');
+  await vistaPrevia.waitFor({ state: 'hidden' });
+  await campanaConDos.click();
+  await vistaPrevia.getByRole('button', { name: 'Ver notificaciones', exact: true }).click();
   const fila = pagina.locator('.feature-row').filter({ hasText: nuevo.mensaje });
   await fila.getByRole('button', { name: 'Marcar como leída', exact: true }).click();
   await pagina.getByRole('button', { name: 'Abrir notificaciones, 1 sin leer', exact: true }).waitFor();
   await fila.getByRole('button', { name: 'Marcar sin leer', exact: true }).click();
   await pagina.getByRole('button', { name: 'Abrir notificaciones, 2 sin leer', exact: true }).waitFor();
   assert.equal(await pagina.evaluate(() => window.tonosNotificacion), 4);
-  await pagina.locator('select[name="lectura"]').selectOption('read');
-  assert.ok(await fila.isHidden());
-  await pagina.getByRole('button', { name: 'Abrir notificaciones, 2 sin leer', exact: true }).click();
+  await pagina.locator('select[name="lectura"]').selectOption('leidas');
+  await pagina.getByText('No hay notificaciones para estos filtros.', { exact: true }).waitFor();
+  await campanaConDos.click();
+  await vistaPrevia.getByRole('button', { name: 'Ver notificaciones', exact: true }).click();
   await fila.waitFor();
+
+  await pagina.locator('select[name="tipo"]').selectOption('STOCK_BAJO');
+  await fila.waitFor();
+  const enBandeja = await crearAviso(web, 'Aviso nuevo con la bandeja abierta');
+  await pagina.clock.fastForward(60_000);
+  await pagina.locator('.feature-row').filter({ hasText: enBandeja.mensaje }).waitFor();
+  assert.equal(await pagina.locator('select[name="tipo"]').inputValue(), 'STOCK_BAJO');
+  await pagina.waitForFunction(() => window.tonosNotificacion === 6);
 
   await pagina.setViewportSize({ width: 360, height: 800 });
   await pagina.goto(baseUrl + '/app/?vista=inventory');
-  await pagina.getByRole('button', { name: 'Abrir notificaciones, 2 sin leer', exact: true }).waitFor();
+  await pagina.getByRole('button', { name: 'Abrir notificaciones, 3 sin leer', exact: true }).waitFor();
   assert.ok(await toast.isHidden());
   assert.ok(await pagina.getByRole('button', { name: 'Abrir menú' }).isVisible());
   const alRegresar = await crearAviso(web, 'Aviso recibido antes de volver');
   await pagina.reload();
   await toast.getByText(alRegresar.mensaje, { exact: true }).waitFor();
   assert.equal(await pagina.evaluate(() => window.tonosNotificacion), 0);
-  const campana = pagina.getByRole('button', { name: 'Abrir notificaciones, 3 sin leer', exact: true });
+  const campana = pagina.getByRole('button', { name: 'Abrir notificaciones, 4 sin leer', exact: true });
   const limites = await campana.boundingBox();
   assert.ok(limites && limites.x >= 0 && limites.x + limites.width <= 360);
   await campana.click();
+  const mensajePrevia = vistaPrevia.getByRole('button', { name: new RegExp(alRegresar.mensaje) });
+  await mensajePrevia.waitFor();
+  const limitesPrevia = await vistaPrevia.boundingBox();
+  assert.ok(limitesPrevia && limitesPrevia.x >= 0 && limitesPrevia.x + limitesPrevia.width <= 360);
+  await mensajePrevia.click();
   await pagina.getByRole('heading', { name: alRegresar.mensaje, exact: true }).waitFor();
   await pagina.waitForFunction(() => window.tonosNotificacion === 2);
 });
@@ -815,7 +928,6 @@ test('Mi cuenta requiere el nombre exacto y respeta el bloqueo por dependencias 
 });
 
 test('El servidor local carga el frontend MVC y permite usar planes, avisos, catálogo e historial', { timeout: 45_000 }, async t => {
-  await correcto('/usuarios', { method: 'POST', body: datosCuenta(idAdminLocal) });
   const sesionAdminLocal = await sesion(idAdminLocal);
   await agregar({ nevera_id: 'FRONTEND-MVC', ingrediente_nombre: 'Leche' }, sesionAdminLocal);
   const aviso = await correcto('/notificaciones', {

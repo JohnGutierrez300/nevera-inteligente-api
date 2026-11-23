@@ -521,6 +521,38 @@ select {
 
 .heading-actions { display: flex; align-items: center; gap: .8rem; }
 
+.notification-control { position: relative; flex: none; }
+
+.notification-preview {
+  position: absolute;
+  z-index: 5;
+  inset: calc(100% + .65rem) 0 auto auto;
+  width: min(22rem, calc(100vw - 2 * var(--page-gutter)));
+  display: grid;
+  gap: .6rem;
+  padding: .8rem;
+  border: 1px solid var(--line);
+  border-radius: .95rem;
+  background: #fff;
+  box-shadow: 0 12px 30px #19352c32;
+  animation: enter 180ms ease-out both;
+}
+
+.notification-preview h2 { margin: 0; font-size: 1.1rem; }
+.notification-preview p { margin: 0; padding: .55rem; }
+.notification-preview-list { display: grid; gap: .4rem; max-height: min(18rem, 42dvh); overflow: auto; }
+.notification-preview .notification-preview-item {
+  display: grid;
+  gap: .25rem;
+  text-align: left;
+  padding: .55rem .65rem;
+  border-radius: .65rem;
+  overflow-wrap: anywhere;
+}
+.notification-preview-item[data-unread] { border-inline-start: .24rem solid #bf8b2c; }
+.notification-preview-message { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.notification-preview-meta { color: var(--muted); font-size: .8rem; font-weight: 500; }
+
 .notification-bell {
   position: relative;
   display: grid;
@@ -1031,7 +1063,7 @@ dialog::backdrop { background: #0d271f9e; backdrop-filter: blur(5px); }
   #dashboard > .heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .heading-actions { display: contents; }
   .heading-actions .button-add { grid-area: 2 / 1 / auto / -1; justify-self: start; width: auto; }
-  .heading-actions .notification-bell { grid-area: 1 / 2; }
+  .heading-actions .notification-control { grid-area: 1 / 2; }
 }
 
 @media (prefers-reduced-motion: reduce) {

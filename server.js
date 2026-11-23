@@ -171,7 +171,8 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   password_hash: { type: String, required: true, select: false },
   recuperacion_hash: { type: String, select: false, unique: true, sparse: true },
   recuperacion_vence: { type: Date, select: false },
-  recuperacion_solicitada: { type: Date, select: false }
+  recuperacion_solicitada: { type: Date, select: false },
+  revision_notificaciones: { type: Number, select: false }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
 
 const IdUsuarioRetirado = mongoose.model('IdUsuarioRetirado', new mongoose.Schema({
@@ -187,6 +188,12 @@ const Sesion = mongoose.model('Sesion', new mongoose.Schema({
   vence: { type: Date, required: true, expires: 0 }
 }, { collection: 'sesiones', versionKey: false }));
 Sesion.schema.index({ usuario: 1, credencial: 1, vence: -1, _id: 1 });
+
+const IntentoIngreso = mongoose.model('IntentoIngreso', new mongoose.Schema({
+  _id: String,
+  intentos: Number,
+  vence: { type: Date, expires: 0 }
+}, { collection: 'intentos_ingreso', versionKey: false }));
 
 const BloqueoMutaciones = mongoose.model('BloqueoMutaciones', new mongoose.Schema({
   _id: String,
@@ -258,20 +265,27 @@ const mealPrepSchema = new mongoose.Schema({
 
 const MealPrep = mongoose.models.MealPrep || mongoose.model('MealPrep', mealPrepSchema);
 
+const TIPOS_NOTIFICACION = ['VENCIMIENTO', 'STOCK_BAJO', 'SUGERENCIA'];
 const Notificacion = mongoose.model('Notificacion', new mongoose.Schema({
   user_nombre: { type: String, ref: 'Usuario', required: true },
   mensaje: { type: String, required: true },
-  tipo: { type: String, enum: ['VENCIMIENTO', 'STOCK_BAJO', 'SUGERENCIA'], default: 'SUGERENCIA' },
+  tipo: { type: String, enum: TIPOS_NOTIFICACION, default: 'SUGERENCIA' },
   nevera_id: String,
   inventario_id: mongoose.Schema.Types.ObjectId,
   fecha_vencimiento: Date,
+  desactualizada: { type: Boolean, default: false },
   leida: { type: Boolean, default: false },
   fecha: { type: Date, default: Date.now }
 }, { collection: 'notificaciones', versionKey: false }));
+Notificacion.schema.index({ user_nombre: 1, fecha: -1, _id: -1 });
+Notificacion.schema.index({ user_nombre: 1, leida: 1, desactualizada: 1 });
+Notificacion.schema.index({ user_nombre: 1, inventario_id: 1 });
 
 const DURACION_SESION_MS = 24 * 60 * 60 * 1000;
 const DURACION_SESION_WEB_MS = 30 * DURACION_SESION_MS;
 const INACTIVIDAD_SESION_MS = 7 * 60 * 1000;
+const LIMITE_INTENTOS_INGRESO = 5;
+const VENTANA_INGRESO_MS = 5 * 60 * 1000;
 const MENSAJE_SESION_ACTIVA = 'Esta cuenta ya tiene una sesión activa. Cierra esa sesión para iniciar otra.';
 const CLAVE_SEGURA = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,1024}$/;
 const NOMBRE_COOKIE = 'nevera_session';
@@ -362,7 +376,7 @@ async function autenticar(req, res, next) {
   const ahora = new Date();
   const sesion = await Sesion.findOne({ _id: huella(token), ...filtroSesionVigente(ahora) }).lean();
   const [usuario, activa] = typeof sesion?.credencial === 'string' ? await Promise.all([
-    Usuario.findById(sesion.usuario).select('+password_hash').lean(),
+    Usuario.findById(sesion.usuario).select('+password_hash +revision_notificaciones').lean(),
     buscarSesionActiva(sesion.usuario, sesion.credencial, ahora)
   ]) : [];
   const credencialValida = typeof usuario?.password_hash === 'string' && huella(usuario.password_hash) === sesion.credencial;
@@ -422,6 +436,38 @@ function mutacion(metodo, ruta, handler) {
     const respuesta = await enTransaccion(() => handler(req));
     res.status(200).json(respuesta);
   });
+}
+
+function cuerpoConCampos(cuerpo, campos) {
+  if (!cuerpo || typeof cuerpo !== 'object' || Array.isArray(cuerpo)) {
+    throw new ApiError(400, 'Envía los campos requeridos en un objeto JSON.');
+  }
+  const faltantes = campos.filter(campo => cuerpo[campo] == null ||
+    (typeof cuerpo[campo] === 'string' && !cuerpo[campo].trim()));
+  if (faltantes.length) throw new ApiError(400, `Completa los campos ${faltantes.join(', ')}.`);
+  return cuerpo;
+}
+
+async function reservarIntentoIngreso(usuarioId, res) {
+  const ahora = new Date();
+  const nuevaVentana = { $lte: [{ $ifNull: ['$vence', new Date(0)] }, ahora] };
+  const cambios = [{ $set: {
+    vence: { $cond: [nuevaVentana, new Date(ahora.getTime() + VENTANA_INGRESO_MS), '$vence'] },
+    intentos: { $cond: [nuevaVentana, 1, { $min: [{ $add: ['$intentos', 1] }, LIMITE_INTENTOS_INGRESO + 1] }] }
+  } }];
+  const guardar = () => IntentoIngreso.findOneAndUpdate({ _id: usuarioId }, cambios, {
+    upsert: true, returnDocument: 'after', updatePipeline: true
+  }).lean();
+  const intento = await guardar().catch(error => {
+    if (error.code === 11000) return guardar();
+    throw error;
+  });
+  if (intento.intentos > LIMITE_INTENTOS_INGRESO) {
+    const segundos = Math.max(1, Math.ceil((intento.vence - ahora) / 1000));
+    res.set('Retry-After', String(segundos));
+    throw new ApiError(429, `Demasiados intentos de inicio de sesión. Inténtalo nuevamente en ${segundos} segundos.`);
+  }
+  return intento;
 }
 
 // ==========================================
@@ -504,8 +550,12 @@ app.post('/api/usuarios/login', async (req, res) => {
   const usuario = filtro && typeof clave === 'string' && clave.length <= 1024
     ? await Usuario.findOne(filtro).select('+password_hash')
     : null;
-  const resultado = usuario && await verificarClave(clave, usuario.password_hash);
-  if (!resultado?.valida) throw new ApiError(401, 'Credenciales inválidas');
+  if (typeof usuario?.password_hash !== 'string') throw new ApiError(401, 'Credenciales inválidas');
+  const llaveIntento = huella(`${usuario._id}:${usuario.password_hash}`);
+  const intento = await reservarIntentoIngreso(llaveIntento, res);
+  const resultado = await verificarClave(clave, usuario.password_hash);
+  if (!resultado.valida) throw new ApiError(401, 'Credenciales inválidas');
+  await IntentoIngreso.deleteOne({ _id: llaveIntento, vence: intento.vence });
 
   if (resultado.anterior) {
     const hash = await protegerClave(clave);
@@ -686,7 +736,7 @@ async function idUsuarioRetirado(id) {
 async function generarIdUsuario() {
   for (let intento = 0; intento < 5; intento++) {
     const id = String(randomInt(100_000_000_000_000, 200_000_000_000_000));
-    if (!await Usuario.exists({ _id: id }) && !await idUsuarioRetirado(id)) return id;
+    if (!ADMINISTRADORES_CATALOGO.has(id) && !await Usuario.exists({ _id: id }) && !await idUsuarioRetirado(id)) return id;
   }
   throw new ApiError(503, 'No se pudo asignar un ID. Intenta nuevamente.');
 }
@@ -702,6 +752,9 @@ app.post('/api/usuarios', async (req, res, next) => {
 
     if (idManual !== null && (!idCompatible(Usuario, id) || !/^\d+$/.test(idManual))) {
       return res.status(200).json(responseFormat(false, 'El ID del usuario debe ser un valor numérico.', null));
+    }
+    if (idManual !== null && ADMINISTRADORES_CATALOGO.has(idManual)) {
+      throw new ApiError(403, 'Ese identificador está reservado. Puedes crear la cuenta con un ID automático.');
     }
 
     if (!nombre || !correoValido(email)) {
@@ -944,7 +997,7 @@ mutacion('delete', '/api/unidades_medida/:id', async req => {
 
 // 5. Productos
 mutacion('post', '/api/productos', async req => {
-  const { _id, marca_nombre, categoria_nombre, nombre } = req.body;
+  const { _id, marca_nombre, categoria_nombre, nombre } = cuerpoConCampos(req.body, ['_id', 'marca_nombre', 'categoria_nombre', 'nombre']);
   await validarReferencias(Producto, { marca_nombre, categoria_nombre });
   const nuevoProducto = new Producto({ _id, marca_nombre, categoria_nombre, nombre });
   await nuevoProducto.save();
@@ -1181,6 +1234,13 @@ mutacion('put', '/api/inventario/:itemId', async req => {
     }
   }
 
+  if (anterior.fecha_vencimiento?.getTime() !== guardado.fecha_vencimiento?.getTime()
+      || anterior.nevera_id !== guardado.nevera_id || anterior.producto_id !== guardado.producto_id
+      || anterior.estado !== guardado.estado || (anterior.cantidad > 0) !== (guardado.cantidad > 0)) {
+    await Inventario.updateOne({ ...filtro, _id: guardado._id }, { $unset: { alerta_vencimiento_generada: 1 } });
+    await desactualizarAvisos(req.usuarioId, { inventario_id: guardado._id, tipo: 'VENCIMIENTO' });
+  }
+
   const itemActualizado = Inventario.hydrate(guardado);
   await registrarHistorial(itemActualizado, 'ACTUALIZADO',
     `Se actualizó el alimento de la nevera ${itemActualizado.nevera_id}`);
@@ -1191,6 +1251,7 @@ mutacion('put', '/api/inventario/:itemId', async req => {
 mutacion('delete', '/api/inventario/:itemId', async req => {
   const itemEliminado = await eliminarPorId(Inventario, req.params.itemId, { user_nombre: req.usuarioId });
 
+  await desactualizarAvisos(req.usuarioId, { inventario_id: itemEliminado._id });
   await registrarHistorial(itemEliminado, 'ELIMINADO', 'Se eliminó físicamente el alimento del inventario');
 
   return responseFormat(true, 'Alimento eliminado exitosamente', itemEliminado);
@@ -1222,7 +1283,7 @@ app.get('/api/historial_inventario/:id', async (req, res, next) => {
 
 // 8. Patrones Predictivos
 mutacion('post', '/api/patrones_predictivos', async req => {
-  const { _id, user_nombre, frecuencia_compra_dias, probabilidad_desperdicio } = req.body;
+  const { _id, user_nombre, frecuencia_compra_dias, probabilidad_desperdicio } = cuerpoConCampos(req.body, ['_id']);
   exigirPropietario(req.usuarioId, user_nombre);
   await validarReferencias(PatronPredictivo, { user_nombre: req.usuarioId });
   const nuevoPatron = new PatronPredictivo({ _id, user_nombre: req.usuarioId, frecuencia_compra_dias, probabilidad_desperdicio });
@@ -1411,30 +1472,123 @@ mutacion('delete', '/api/meal_preps/:id', async req => {
 });
 
 // 11. Notificaciones
+const ORDEN_AVISOS = { fecha: -1, _id: -1 };
+const AVISOS_SIN_LEER = { leida: { $ne: true }, desactualizada: { $ne: true } };
+const formatearVencimiento = new Intl.DateTimeFormat('es-CO', {
+  dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Bogota', hourCycle: 'h23'
+});
+
+function presentarAviso(aviso) {
+  const { fecha_vencimiento, inventario_id, mensaje } = aviso;
+  const fechaAnterior = inventario_id && typeof mensaje === 'string' && fecha_vencimiento instanceof Date
+    && Number.isFinite(fecha_vencimiento.getTime()) ? fecha_vencimiento.toISOString() : null;
+  return {
+    ...aviso,
+    desactualizada: aviso.desactualizada === true,
+    mensaje: fechaAnterior ? mensaje.replace(fechaAnterior, formatearVencimiento.format(fecha_vencimiento)) : mensaje
+  };
+}
+
+function aumentarRevisionAvisos(usuarioId) {
+  return Usuario.updateOne({ _id: usuarioId }, { $inc: { revision_notificaciones: 1 } });
+}
+
+async function crearAviso(datos) {
+  const aviso = await Notificacion.create(datos);
+  await aumentarRevisionAvisos(aviso.user_nombre);
+  return aviso;
+}
+
+async function desactualizarAvisos(usuarioId, filtro) {
+  const resultado = await Notificacion.updateMany({ user_nombre: usuarioId, desactualizada: { $ne: true }, ...filtro },
+    { $set: { desactualizada: true } });
+  if (resultado.modifiedCount) await aumentarRevisionAvisos(usuarioId);
+}
+
+async function revisarAvisosLegados() {
+  const anteriores = Notificacion.aggregate([
+    { $match: { tipo: 'VENCIMIENTO', inventario_id: { $type: 'objectId' }, desactualizada: { $exists: false } } },
+    { $lookup: { from: Inventario.collection.name, localField: 'inventario_id', foreignField: '_id', as: 'lote' } },
+    { $set: { lote: { $first: '$lote' } } },
+    { $match: { $expr: { $not: [{ $and: [
+      { $eq: ['$lote.user_nombre', '$user_nombre'] },
+      { $eq: ['$lote.fecha_vencimiento', '$fecha_vencimiento'] },
+      { $eq: [{ $ifNull: ['$lote.nevera_id', NEVERA_PREDETERMINADA] }, { $ifNull: ['$nevera_id', NEVERA_PREDETERMINADA] }] },
+      { $eq: [{ $ifNull: ['$lote.estado', 'EN_NEVERA'] }, 'EN_NEVERA'] },
+      { $gt: ['$lote.cantidad', 0] }
+    ] }] } } },
+    { $project: { user_nombre: 1 } }
+  ]).cursor();
+  for await (const aviso of anteriores) {
+    await enTransaccion(() => desactualizarAvisos(aviso.user_nombre, { _id: aviso._id, desactualizada: { $exists: false } }));
+  }
+}
+
+let avisosLegadosListos;
+function prepararAvisos() {
+  if (!avisosLegadosListos) {
+    avisosLegadosListos = revisarAvisosLegados().catch(error => {
+      avisosLegadosListos = undefined;
+      throw error;
+    });
+  }
+  return avisosLegadosListos;
+}
+
 mutacion('post', '/api/notificaciones', async req => {
-  const { user_nombre, mensaje, tipo, leida } = req.body;
+  const { user_nombre, mensaje, tipo, leida } = cuerpoConCampos(req.body, ['mensaje']);
+  if (typeof mensaje !== 'string') throw new ApiError(400, 'Envía el mensaje como texto.');
   exigirPropietario(req.usuarioId, user_nombre);
   await validarReferencias(Notificacion, { user_nombre: req.usuarioId });
-  const nuevaNoti = new Notificacion({ user_nombre: req.usuarioId, mensaje, tipo, leida });
-  await nuevaNoti.save();
+  const nuevaNoti = await crearAviso({ user_nombre: req.usuarioId, mensaje, tipo, leida });
   return responseFormat(true, 'Notificación creada exitosamente', nuevaNoti);
 });
 
-app.get('/api/notificaciones', async (req, res, next) => {
-  try {
-    exigirPropietario(req.usuarioId, req.query.user_nombre);
-    const filtro = { user_nombre: req.usuarioId };
-    const notificaciones = await Notificacion.find(filtro).sort({ fecha: -1, _id: -1 }).lean();
-    res.status(200).json(responseFormat(true, 'Notificaciones obtenidas', notificaciones));
-  } catch (error) {
-    next(error);
+app.get('/api/notificaciones/resumen', async (req, res) => {
+  const conocida = req.query.revision;
+  if (conocida !== undefined && (typeof conocida !== 'string' || !/^\d+$/.test(conocida) || !Number.isSafeInteger(Number(conocida)))) {
+    throw new ApiError(400, 'Envía una revisión de notificaciones válida.');
   }
+  await prepararAvisos();
+  const revision = req.usuario.revision_notificaciones ?? 0;
+  const filtro = { user_nombre: req.usuarioId };
+  const [sin_leer, recientes] = await Promise.all([
+    Notificacion.countDocuments({ ...filtro, ...AVISOS_SIN_LEER }),
+    conocida !== undefined && Number(conocida) === revision
+      ? undefined
+      : Notificacion.find(filtro).sort(ORDEN_AVISOS).limit(5).lean()
+  ]);
+  res.json(responseFormat(true, 'Resumen de notificaciones obtenido', {
+    revision, sin_leer, ...(recientes && { recientes: recientes.map(presentarAviso) })
+  }));
+});
+
+app.get('/api/notificaciones', async (req, res) => {
+  const { tipo, lectura, user_nombre } = req.query;
+  exigirPropietario(req.usuarioId, user_nombre);
+  if (tipo !== undefined && !TIPOS_NOTIFICACION.includes(tipo)) throw new ApiError(400, 'Tipo de notificación inválido.');
+  if (lectura !== undefined && !['sin_leer', 'leidas'].includes(lectura)) throw new ApiError(400, 'Estado de lectura inválido.');
+  const paginacion = opcionesPaginacion(req.query);
+  await prepararAvisos();
+  const filtro = { user_nombre: req.usuarioId };
+  if (tipo !== undefined) filtro.tipo = tipo;
+  if (lectura === 'sin_leer') Object.assign(filtro, AVISOS_SIN_LEER);
+  if (lectura === 'leidas') filtro.leida = true;
+  const consulta = Notificacion.find(filtro).sort(ORDEN_AVISOS).lean();
+  if (!paginacion) return res.json(responseFormat(true, 'Notificaciones obtenidas', (await consulta).map(presentarAviso)));
+  const { pagina, limite, salto } = paginacion;
+  const avisos = await consulta.skip(salto).limit(limite + 1);
+  res.json({
+    ...responseFormat(true, 'Notificaciones obtenidas', avisos.slice(0, limite).map(presentarAviso)),
+    paginacion: { pagina, limite, hay_siguiente: avisos.length > limite }
+  });
 });
 
 app.get('/api/notificaciones/:id', async (req, res, next) => {
   try {
+    await prepararAvisos();
     const notificacion = await obtenerOFallar(Notificacion, req.params.id, { user_nombre: req.usuarioId });
-    res.status(200).json(responseFormat(true, 'Notificación obtenida', notificacion));
+    res.status(200).json(responseFormat(true, 'Notificación obtenida', presentarAviso(notificacion)));
   } catch (error) {
     next(error);
   }
@@ -1444,16 +1598,18 @@ mutacion('patch', '/api/notificaciones/:id', async req => {
   const { leida } = req.body ?? {};
   if (typeof leida !== 'boolean') throw new ApiError(400, 'Indica si la notificación está leída.');
   const filtro = { user_nombre: req.usuarioId };
-  await obtenerOFallar(Notificacion, req.params.id, filtro);
+  const anterior = await obtenerOFallar(Notificacion, req.params.id, filtro);
   const actualizada = await Notificacion.findOneAndUpdate({ ...filtro, _id: req.params.id }, { $set: { leida } }, {
     returnDocument: 'after', runValidators: true
   });
-  return responseFormat(true, leida ? 'Notificación marcada como leída' : 'Notificación marcada como pendiente', actualizada);
+  if (anterior.leida !== leida) await aumentarRevisionAvisos(req.usuarioId);
+  return responseFormat(true, leida ? 'Notificación marcada como leída' : 'Notificación marcada como pendiente', presentarAviso(actualizada.toObject()));
 });
 
 mutacion('delete', '/api/notificaciones/:id', async req => {
   const notiEliminada = await eliminarPorId(Notificacion, req.params.id, { user_nombre: req.usuarioId });
-  return responseFormat(true, 'Notificación eliminada', notiEliminada);
+  await aumentarRevisionAvisos(req.usuarioId);
+  return responseFormat(true, 'Notificación eliminada', presentarAviso(notiEliminada.toObject()));
 });
 
 // ==========================================
@@ -1496,13 +1652,13 @@ async function generarAlertasVencimiento() {
       );
       if (!item) return;
       const producto = await Producto.findById(item.producto_id).select('nombre').lean();
-      await Notificacion.create({
+      await crearAviso({
         user_nombre: item.user_nombre,
         nevera_id: item.nevera_id,
         inventario_id: item._id,
         fecha_vencimiento: item.fecha_vencimiento,
         tipo: 'VENCIMIENTO',
-        mensaje: `${producto?.nombre ?? item.producto_id} vence el ${item.fecha_vencimiento.toISOString()} en la nevera ${item.nevera_id}.`
+        mensaje: `${producto?.nombre ?? item.producto_id} vence el ${formatearVencimiento.format(item.fecha_vencimiento)} (hora de Colombia) en la nevera ${item.nevera_id}.`
       });
     });
   }
@@ -1523,6 +1679,7 @@ function iniciarAlertas() {
 
 conexion.then(iniciarAlertas).catch(() => {});
 conexion.then(prepararInactividad).catch(() => {});
+conexion.then(prepararAvisos).catch(error => console.error('No se pudieron revisar los avisos anteriores:', error.message));
 
 // Inicialización del Servidor
 const PORT = process.env.PORT || 3000;

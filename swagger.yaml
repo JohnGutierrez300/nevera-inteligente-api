@@ -58,7 +58,7 @@ paths:
       tags: [Usuarios]
       operationId: loginUser
       summary: Iniciar sesión web u obtener un token Bearer
-      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger. Cada cuenta admite una sesión activa. La sesión vence tras 7 minutos sin actividad. El navegador que ya tiene la cookie válida puede continuar con la misma sesión.
+      description: Envía el nombre de usuario o su ID. Copia data.token y pégalo en el botón Authorize de Swagger. Cada cuenta admite una sesión activa. La sesión vence tras 7 minutos sin actividad. El navegador que ya tiene la cookie válida puede continuar con la misma sesión. Tras cinco intentos fallidos de una cuenta, espera a que termine su ventana de cinco minutos.
       requestBody:
         required: true
         content:
@@ -106,6 +106,16 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "409":
           description: La cuenta ya tiene una sesión activa. Ciérrala para iniciar otra.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        "429":
+          description: Se alcanzó el límite de intentos para esta cuenta.
+          headers:
+            Retry-After:
+              description: Segundos antes de intentar nuevamente.
+              schema: { type: integer, minimum: 1 }
           content:
             application/json:
               schema:
@@ -176,7 +186,7 @@ paths:
       tags: [Usuarios]
       operationId: createUser
       summary: Crear un nuevo usuario (Valida unicidad, ID numérico y contraseña segura)
-      description: Si omites el ID, la API asigna uno automáticamente. Si el ID enviado pertenece a una cuenta eliminada o quedó en su historial, devuelve HTTP 200 con `success: false`.
+      description: Si omites el ID, la API asigna uno automáticamente. Los IDs de administrador se reservan para cuentas configuradas. Si el ID enviado pertenece a una cuenta eliminada o quedó en su historial, devuelve HTTP 200 con `success: false`.
       requestBody:
         required: true
         content:
@@ -188,6 +198,12 @@ paths:
           $ref: '#/components/responses/Ok'
         "400":
           $ref: '#/components/responses/BadRequest'
+        "403":
+          description: El ID solicitado está reservado para una cuenta administradora.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
         "500":
           $ref: '#/components/responses/InternalError'
     get:
@@ -1189,18 +1205,89 @@ paths:
         - bearerAuth: []
       tags: [Notificaciones]
       operationId: listNotifications
-      summary: Listar notificaciones (Filtrable por usuario)
+      summary: Listar notificaciones de la sesión
+      description: Ordena los avisos del más reciente al más antiguo. Los avisos desactualizados se conservan en el historial. La API incluye paginacion cuando se envía pagina o limite.
       parameters:
         - $ref: '#/components/parameters/UsuarioIdQuery'
+        - $ref: '#/components/parameters/PaginaQuery'
+        - $ref: '#/components/parameters/LimiteQuery'
+        - name: tipo
+          in: query
+          schema: { type: string, enum: [VENCIMIENTO, STOCK_BAJO, SUGERENCIA] }
+        - name: lectura
+          in: query
+          description: Sin leer incluye los avisos vigentes pendientes. Leídas incluye los avisos que el usuario marcó como tales.
+          schema: { type: string, enum: [sin_leer, leidas] }
       responses:
         "200":
-          $ref: '#/components/responses/Ok'
+          description: Notificaciones de la sesión y datos de paginación cuando se solicita.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Notificacion'
+                      paginacion:
+                        type: object
+                        properties:
+                          pagina: { type: integer }
+                          limite: { type: integer }
+                          hay_siguiente: { type: boolean }
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "500":
           $ref: '#/components/responses/InternalError'
         "401":
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
+
+  /api/notificaciones/resumen:
+    get:
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      tags: [Notificaciones]
+      operationId: summarizeNotifications
+      summary: Consultar el contador y la vista previa de notificaciones
+      description: Devuelve el número de avisos vigentes sin leer y hasta cinco avisos recientes. Si la revisión enviada coincide con la actual, devuelve el contador y la revisión.
+      parameters:
+        - name: revision
+          in: query
+          description: Última revisión recibida por el cliente.
+          schema: { type: integer, minimum: 0, maximum: 9007199254740991 }
+      responses:
+        "200":
+          description: Resumen de notificaciones de la sesión.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [revision, sin_leer]
+                        properties:
+                          revision: { type: integer, minimum: 0 }
+                          sin_leer: { type: integer, minimum: 0 }
+                          recientes:
+                            type: array
+                            maxItems: 5
+                            items:
+                              $ref: '#/components/schemas/Notificacion'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
 
   /api/notificaciones/{id}:
     parameters:
@@ -1762,3 +1849,18 @@ components:
         leida:
           type: boolean
           default: false
+
+    Notificacion:
+      allOf:
+        - $ref: '#/components/schemas/NotificacionInput'
+        - type: object
+          properties:
+            _id: { type: string }
+            nevera_id: { type: string }
+            inventario_id: { type: string }
+            fecha_vencimiento: { type: string, format: date-time }
+            fecha: { type: string, format: date-time }
+            desactualizada:
+              type: boolean
+              readOnly: true
+              description: Indica que el aviso se conserva como historial después de cambiar o eliminar el lote. Se excluye del contador de avisos vigentes sin leer.

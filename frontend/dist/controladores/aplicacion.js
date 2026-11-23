@@ -47,6 +47,7 @@ export function startApp() {
   const app = createAppView({
     onNavigate: selectView,
     onLogout: signOut,
+    onPreviewNotifications: refreshUnread,
     onOpenNotifications() {
       dashboard.resetAlertFilters();
       void selectView('alerts');
@@ -78,7 +79,10 @@ export function startApp() {
     getGeneration: () => viewRequest,
     reload: loadView,
     navigate: selectView,
-    onNotifications: notifications.sync,
+    onNotifications(summary) {
+      notifications.sync(summary);
+      app.showNotificationPreview(summary.recientes);
+    },
     onAccountDeleted: endSession,
     onProfileSaved(profile, passwordChanged) {
       if (passwordChanged) {
@@ -109,6 +113,7 @@ export function startApp() {
   function endSession(message = '') {
     idle.stop();
     notifications.stop();
+    dashboard.resetNotifications();
     user = null;
     viewRequest++;
     inventoryPage = 1;
@@ -216,15 +221,15 @@ export function startApp() {
     if (currentView === 'inventory') void loadView();
   }
 
-  async function loadView() {
+  async function loadView({ background = false } = {}) {
     if (!user) return;
     const generation = ++viewRequest;
     const view = currentView;
     inventory.setLoading(view === 'inventory');
-    app.showLoading();
+    if (!background) app.showLoading();
     try {
       if (view !== 'inventory') {
-        const page = await dashboard.load(view);
+        const page = await dashboard.load(view, background);
         if (generation === viewRequest) app.showResults(page);
         return;
       }
@@ -234,7 +239,7 @@ export function startApp() {
       ]);
       if (generation === viewRequest) app.showResults(inventory.render(items.data, products, items.paginacion));
     } catch (error) {
-      if (generation !== viewRequest) return;
+      if (generation !== viewRequest || background) return;
       inventory.hidePagination();
       app.showError(error, loadView);
     }
@@ -292,6 +297,7 @@ export function startApp() {
       if (user !== active) return;
       dialogs.closeDetails();
       notice(response.message);
+      void refreshUnread();
       await loadView();
     } catch (error) {
       if (user !== active) return;
@@ -315,6 +321,7 @@ export function startApp() {
       if (id) {
         notice();
         dialogs.showUpdated();
+        void refreshUnread();
       } else {
         notice(response.message);
       }
@@ -338,6 +345,7 @@ export function startApp() {
         const response = await model.inventory.remove(id);
         if (user !== active) return;
         notice(response.message);
+        void refreshUnread();
         await loadView();
       } catch (error) {
         if (user === active) notice(error);
@@ -353,8 +361,11 @@ export function startApp() {
     unreadRefresh = active;
     try {
       await dashboard.loadNotifications();
+      if (active === user && currentView === 'alerts' && dashboard.alertsNeedRefresh()) {
+        await loadView({ background: true });
+      }
     } catch {
-      // La bandeja vuelve a consultar los avisos al abrirse.
+      if (active === user) app.showNotificationPreviewError();
     } finally {
       if (unreadRefresh === active) unreadRefresh = undefined;
     }

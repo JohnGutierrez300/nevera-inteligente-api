@@ -175,30 +175,39 @@ function plans(items, suggestions, { onEdit, onDetail, onDelete, onViewLot }) {
   return group('panel-content', plansSection, suggestionsSection);
 }
 
-function alerts(items, filters, { onToggle, onDelete, onViewLot }) {
-  const type = labelSelect('Tipo', 'tipo', [['', 'Todos'], ...Object.entries(notificationTypes)], filters.type);
-  const read = labelSelect('Estado', 'lectura', [['', 'Todos'], ['unread', 'Sin leer'], ['read', 'Leídas']], filters.read);
-  const results = group('feature-list');
+function alerts(items, { pagina, hay_siguiente }, filters, { onToggle, onDelete, onViewLot, onFilter, onPage }) {
+  const type = labelSelect('Tipo', 'tipo', [['', 'Todos'], ...Object.entries(notificationTypes)], filters.tipo);
+  const read = labelSelect('Estado', 'lectura', [['', 'Todos'], ['sin_leer', 'Sin leer'], ['leidas', 'Leídas']], filters.lectura);
   function apply() {
-    filters.type = type.select.value;
-    filters.read = read.select.value;
-    const filtered = items.filter(item => (!filters.type || item.tipo === filters.type) &&
-      (!filters.read || !!item.leida === (filters.read === 'read')));
-    const content = list(filtered, item => {
-      const context = [formatDate(item.fecha), item.nevera_id, item.fecha_vencimiento &&
-        ('Vence ' + formatDate(item.fecha_vencimiento)), item.leida ? 'Leída' : 'Sin leer'].filter(Boolean).join(' · ');
+    filters.tipo = type.select.value;
+    filters.lectura = read.select.value;
+    onFilter();
+  }
+  const results = list(items, item => {
+    const estado = item.desactualizada ? 'Desactualizada' : item.leida ? 'Leída' : 'Sin leer';
+    const context = [formatDate(item.fecha), item.nevera_id, item.fecha_vencimiento &&
+      ('Vence ' + formatDate(item.fecha_vencimiento)), estado].filter(Boolean).join(' · ');
+    const buttons = [];
+    if (!item.desactualizada) {
+      if (item.inventario_id) buttons.push(action('Ver lote', () => onViewLot(item.inventario_id), 'text-button button-view'));
       const toggle = action(item.leida ? 'Marcar sin leer' : 'Marcar como leída',
         () => onToggle(item, busy => { toggle.disabled = busy; }));
-      const buttons = [toggle, action('Eliminar', () => onDelete(item._id), 'text-button danger')];
-      if (item.inventario_id) buttons.unshift(action('Ver lote', () => onViewLot(item.inventario_id), 'text-button button-view'));
-      return row(item.mensaje, context, buttons, badge(notificationTypes[item.tipo] ?? 'Aviso', item.tipo === 'VENCIMIENTO' ? 'warning' : ''));
-    }, 'No hay notificaciones para estos filtros.');
-    results.replaceChildren(...content.childNodes);
-  }
+      buttons.push(toggle);
+    }
+    buttons.push(action('Eliminar', () => onDelete(item._id), 'text-button danger'));
+    const chipState = !item.desactualizada && item.tipo === 'VENCIMIENTO' ? 'warning' : '';
+    return row(item.mensaje, context, buttons, badge(notificationTypes[item.tipo] ?? 'Aviso', chipState));
+  }, 'No hay notificaciones para estos filtros.');
   type.select.addEventListener('change', apply);
   read.select.addEventListener('change', apply);
-  apply();
-  return group('panel-content', group('feature-filters', type.wrapper, read.wrapper), results);
+  const previous = action('Anterior', () => onPage(-1), 'secondary');
+  const next = action('Siguiente', () => onPage(1), 'secondary');
+  previous.disabled = pagina === 1;
+  next.disabled = !hay_siguiente;
+  const pagination = group('inventory-pagination', previous, element('span', 'Página ' + pagina), next);
+  pagination.hidden = previous.disabled && next.disabled;
+  pagination.setAttribute('aria-label', 'Paginación de notificaciones');
+  return group('panel-content', group('feature-filters', type.wrapper, read.wrapper), results, pagination);
 }
 
 function historyName(log, names) {
@@ -323,13 +332,14 @@ function profile(account, { onEdit, onChangePassword, onDelete }) {
 }
 
 export function createDashboardView() {
-  const filters = { type: '', read: '' };
+  const filters = { tipo: '', lectura: '' };
   return {
     home, plans, planEditor, planDetails, history, catalog, catalogEditor, profile, profileEditor, passwordEditor,
-    alerts: (items, actions) => alerts(items, filters, actions),
+    alerts: (items, pagination, actions) => alerts(items, pagination, filters, actions),
+    getAlertFilters: () => ({ ...filters }),
     resetAlertFilters() {
-      filters.type = '';
-      filters.read = '';
+      filters.tipo = '';
+      filters.lectura = '';
     }
   };
 }
