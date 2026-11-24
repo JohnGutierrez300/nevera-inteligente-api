@@ -1141,14 +1141,16 @@ mutacion('post', '/api/productos', async req => {
 app.get('/api/productos', async (req, res, next) => {
   try {
     const productos = await Producto.find().lean();
-    const productosCompletos = await Promise.all(productos.map(async (prod) => {
-      const marca = await Marca.findById(prod.marca_nombre).lean();
-      const categoria = await Categoria.findById(prod.categoria_nombre).lean();
-      return {
-        ...prod,
-        marca_nombre: marca || prod.marca_nombre,
-        categoria_nombre: categoria || prod.categoria_nombre
-      };
+    const [marcas, categorias] = productos.length ? await Promise.all([
+      Marca.find({ _id: { $in: [...new Set(productos.map(producto => producto.marca_nombre))] } }).lean(),
+      Categoria.find({ _id: { $in: [...new Set(productos.map(producto => producto.categoria_nombre))] } }).lean()
+    ]) : [[], []];
+    const marcasPorId = new Map(marcas.map(marca => [marca._id, marca]));
+    const categoriasPorId = new Map(categorias.map(categoria => [categoria._id, categoria]));
+    const productosCompletos = productos.map(producto => ({
+      ...producto,
+      marca_nombre: marcasPorId.get(producto.marca_nombre) ?? producto.marca_nombre,
+      categoria_nombre: categoriasPorId.get(producto.categoria_nombre) ?? producto.categoria_nombre
     }));
     res.status(200).json(responseFormat(true, 'Lista de productos obtenida', productosCompletos));
   } catch (error) {
@@ -1339,6 +1341,41 @@ app.get('/api/inventario', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.get('/api/inventario/resumen', async (req, res) => {
+  const ahora = new Date();
+  const limite = new Date(ahora.getTime() + 72 * HORA_MS);
+  const fecha = '$fecha_vencimiento';
+  const tieneFecha = { $eq: [{ $type: fecha }, 'date'] };
+  const vencido = { $and: [tieneFecha, { $lt: [fecha, ahora] }] };
+  const proximo = { $and: [tieneFecha, { $gte: [fecha, ahora] }, { $lte: [fecha, limite] }] };
+  const [{ conteos, vencimientos }] = await Inventario.aggregate([
+    { $match: { user_nombre: req.usuarioId, estado: 'EN_NEVERA', cantidad: { $gt: 0 } } },
+    { $project: { producto_id: 1, nevera_id: 1, fecha_vencimiento: 1 } },
+    { $facet: {
+      conteos: [{ $group: {
+        _id: null,
+        total: { $sum: 1 },
+        vencidos: { $sum: { $cond: [vencido, 1, 0] } },
+        proximos: { $sum: { $cond: [proximo, 1, 0] } }
+      } }, { $unset: '_id' }],
+      vencimientos: [
+        { $match: { $expr: { $and: [tieneFecha, { $lte: [fecha, limite] }] } } },
+        { $sort: { fecha_vencimiento: 1, _id: 1 } },
+        { $limit: 8 },
+        { $lookup: { from: Producto.collection.collectionName, localField: 'producto_id', foreignField: '_id', as: 'producto' } },
+        { $project: {
+          nevera_id: 1,
+          fecha_vencimiento: 1,
+          vencido,
+          producto_nombre: { $ifNull: [{ $arrayElemAt: ['$producto.nombre', 0] }, '$producto_id'] }
+        } }
+      ]
+    } }
+  ]);
+  const totales = conteos[0] ?? { total: 0, vencidos: 0, proximos: 0 };
+  res.json(responseFormat(true, 'Resumen de inventario obtenido', { ...totales, vencimientos }));
 });
 
 app.get('/api/inventario/:itemId', async (req, res, next) => {

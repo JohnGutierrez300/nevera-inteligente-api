@@ -1052,6 +1052,8 @@ test('El menú táctil horizontal funciona e Inicio sigue disponible cuando fall
   await correcto('/usuarios', { method: 'POST', body: datosCuenta(idMovil) });
   const navegador = await abrirNavegador(t);
   const pagina = await navegador.newPage({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true });
+  const peticiones = new Set();
+  pagina.on('request', solicitud => peticiones.add(new URL(solicitud.url()).pathname));
   const responderAvisos = Promise.withResolvers();
   await pagina.route('**/api/notificaciones/resumen*', async route => {
     await responderAvisos.promise;
@@ -1066,6 +1068,8 @@ test('El menú táctil horizontal funciona e Inicio sigue disponible cuando fall
   }
   await pagina.getByText('Avisos no disponibles', { exact: true }).waitFor();
   assert.ok(await pagina.getByText('Lotes en nevera', { exact: true }).isVisible());
+  assert.ok(peticiones.has('/api/inventario/resumen'));
+  assert.equal(peticiones.has('/api/inventario') || peticiones.has('/api/productos'), false);
   await pagina.getByRole('button', { name: 'Abrir menú' }).click();
   const menu = pagina.getByRole('dialog', { name: 'Menú' });
   assert.ok(await menu.isVisible());
@@ -1496,6 +1500,71 @@ test('Una solicitud con JSON inválido devuelve un identificador y un mensaje se
   await esperar(() => salida.includes(JSON.stringify({ evento: 'error_api', solicitud, categoria: 'json_invalido', estado: 400 })),
     'No se registró el error de JSON con su identificador.');
   assert.ok(!salida.includes(nota));
+});
+
+test('El catálogo conserva el orden y las referencias faltantes al agrupar la consulta', async t => {
+  const cliente = await new MongoClient(mongoUri).connect();
+  const productos = cliente.db().collection('productos');
+  const sinReferencia = {
+    _id: 'PRODUCTO-LEGADO-RESUMEN', nombre: 'Producto anterior',
+    marca_nombre: 'Marca anterior', categoria_nombre: 'Lácteos'
+  };
+  t.after(async () => {
+    await productos.deleteOne({ _id: sinReferencia._id });
+    await cliente.close();
+  });
+  await productos.insertOne(sinReferencia);
+  const orden = (await productos.find().toArray()).map(item => item._id);
+  const catalogo = await correcto('/productos');
+  assert.deepEqual(catalogo.map(item => item._id), orden);
+  assert.deepEqual(catalogo.find(item => item._id === sinReferencia._id), {
+    ...sinReferencia, categoria_nombre: { _id: sinReferencia.categoria_nombre }
+  });
+  const leche = catalogo.find(item => item._id === loteBase.producto_id);
+  assert.deepEqual(leche.marca_nombre, { _id: 'Marca de prueba' });
+  assert.deepEqual(leche.categoria_nombre, { _id: 'Lácteos' });
+});
+
+test('El resumen de inventario cuenta los lotes activos del usuario y limita sus vencimientos a ocho', async t => {
+  const id = '742011';
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
+  const auth = await sesion(id);
+  assert.equal((await api('/inventario/resumen')).status, 401);
+  const resumen = () => correcto('/inventario/resumen', auth);
+  assert.deepEqual(await resumen(), { total: 0, vencidos: 0, proximos: 0, vencimientos: [] });
+
+  const cliente = await new MongoClient(mongoUri).connect();
+  const inventario = cliente.db().collection('inventario');
+  const nevera = 'PRUEBA-RESUMEN';
+  t.after(async () => {
+    await inventario.deleteMany({ nevera_id: nevera });
+    await cliente.close();
+  });
+  const lote = campos => ({ ...loteBase, _id: new ObjectId(), user_nombre: id, estado: 'EN_NEVERA', nevera_id: nevera, ...campos });
+  const ahora = Date.now();
+  const hora = 3_600_000;
+  const vencido = lote({ producto_id: 'SIN-PRODUCTO-DE-PRUEBA', fecha_vencimiento: new Date(ahora - hora) });
+  const proximos = Array.from({ length: 9 }, (_, i) => lote({ fecha_vencimiento: new Date(ahora + (i + 1) * hora) }));
+  proximos[1].fecha_vencimiento = proximos[0].fecha_vencimiento;
+  await inventario.insertMany([
+    ...proximos.toReversed(), vencido,
+    lote({ fecha_vencimiento: new Date(ahora + 73 * hora) }),
+    lote({ fecha_vencimiento: null }),
+    lote({}),
+    lote({ fecha_vencimiento: 'no es una fecha' }),
+    lote({ fecha_vencimiento: [new Date(ahora - 2 * hora)] }),
+    lote({ cantidad: 0, fecha_vencimiento: new Date(ahora - 2 * hora) }),
+    lote({ estado: 'CONSUMIDO', fecha_vencimiento: new Date(ahora - 3 * hora) }),
+    lote({ user_nombre: idUsuario, fecha_vencimiento: new Date(ahora - 4 * hora) })
+  ]);
+  const { total, vencidos, proximos: cantidadProximos, vencimientos } = await resumen();
+  assert.deepEqual([total, vencidos, cantidadProximos], [15, 1, 9]);
+  assert.deepEqual(vencimientos.map(item => item._id), [vencido, ...proximos.slice(0, 7)].map(item => item._id.toHexString()));
+  assert.deepEqual(vencimientos[0], {
+    _id: vencido._id.toHexString(), nevera_id: nevera, producto_nombre: 'SIN-PRODUCTO-DE-PRUEBA',
+    fecha_vencimiento: vencido.fecha_vencimiento.toISOString(), vencido: true
+  });
+  assert.ok(vencimientos.slice(1).every(item => item.producto_nombre === 'Leche de prueba' && !item.vencido));
 });
 
 test('La ruta de salud detecta cuando MongoDB deja de responder', { timeout: 35_000 }, async () => {

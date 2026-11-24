@@ -1,4 +1,3 @@
-import { summarizeLots } from '../modelos/nevera.js';
 import { notice } from '../vistas/componentes.js';
 import { catalogs, createDashboardView } from '../vistas/dashboard.js';
 
@@ -64,14 +63,10 @@ export function createDashboardController({
   async function home() {
     const generation = getGeneration();
     const notifications = loadNotifications().catch(() => null);
-    const [inventory, products] = await Promise.all([
-      model.inventory.list({ estado: 'EN_NEVERA' }),
-      model.catalog.productsForDisplay().catch(() => [])
-    ]);
+    const inventory = await model.inventory.summary();
     const summary = view.home({
       account: getProfile(),
-      products,
-      summary: summarizeLots(inventory.data),
+      summary: inventory,
       onNavigate: navigate,
       onViewLot: openLotDetail
     });

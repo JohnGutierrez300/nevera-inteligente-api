@@ -851,6 +851,48 @@ paths:
         "400":
           $ref: '#/components/responses/BadRequest'
 
+  /api/inventario/resumen:
+    get:
+      security:
+        - bearerAuth: []
+      tags: [Inventario]
+      operationId: summarizeInventory
+      summary: Obtener el resumen del inventario del usuario autenticado
+      description: Cuenta los lotes en nevera con cantidad positiva. Incluye hasta ocho lotes vencidos o que vencen en las próximas 72 horas, ordenados por vencimiento.
+      responses:
+        "200":
+          description: Resumen del inventario y sus vencimientos.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [total, vencidos, proximos, vencimientos]
+                        properties:
+                          total: { type: integer, minimum: 0 }
+                          vencidos: { type: integer, minimum: 0 }
+                          proximos: { type: integer, minimum: 0 }
+                          vencimientos:
+                            type: array
+                            maxItems: 8
+                            items:
+                              type: object
+                              required: [_id, producto_nombre, nevera_id, fecha_vencimiento, vencido]
+                              properties:
+                                _id: { type: string }
+                                producto_nombre: { type: string }
+                                nevera_id: { type: string }
+                                fecha_vencimiento: { type: string, format: date-time }
+                                vencido: { type: boolean }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+
   /api/inventario/{itemId}:
     parameters:
       - $ref: '#/components/parameters/InventarioIdPath'

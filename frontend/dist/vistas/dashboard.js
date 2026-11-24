@@ -61,13 +61,12 @@ function labelSelect(label, name, options, current = '') {
   return { wrapper, select };
 }
 
-function home({ account, products, summary, onNavigate, onViewLot }) {
-  const names = new Map(products.map(product => [product._id, product.nombre]));
-  const { total, expired, soon } = summary;
+function home({ account, summary, onNavigate, onViewLot }) {
+  const { total, vencidos, proximos, vencimientos } = summary;
   const metrics = [
     ['Lotes en nevera', total, 'inventory', ''],
-    ['Vencen en 72 horas', soon.length, null, 'warning'],
-    ['Lotes vencidos', expired.length, null, 'critical']
+    ['Vencen en 72 horas', proximos, null, 'warning'],
+    ['Lotes vencidos', vencidos, null, 'critical']
   ];
   const heading = section('Hola, ' + (account?.nombre ?? ''), action('Ver inventario', () => onNavigate('inventory'), 'primary'));
   const tiles = metrics.map(([label, count, view, state]) => {
@@ -83,14 +82,10 @@ function home({ account, products, summary, onNavigate, onViewLot }) {
   heading.append(group('metric-grid', ...tiles, alerts));
 
   const upcoming = section('Vencimientos');
-  const rows = [...expired, ...soon].slice(0, 8);
-  upcoming.append(list(rows, lot => {
-    const isExpired = expired.includes(lot);
-    const product = names.get(lot.producto_id) ?? lot.producto_id;
-    return row(product, formatDate(lot.fecha_vencimiento) + ' · ' + lot.nevera_id,
-      [action('Ver lote', () => onViewLot(lot._id), 'text-button button-view')],
-      badge(isExpired ? 'Vencido' : 'Vence pronto', isExpired ? 'critical' : 'warning'));
-  }, 'Tus lotes vigentes no tienen vencimientos próximos.'));
+  upcoming.append(list(vencimientos, lot => row(lot.producto_nombre, formatDate(lot.fecha_vencimiento) + ' · ' + lot.nevera_id,
+    [action('Ver lote', () => onViewLot(lot._id), 'text-button button-view')],
+    badge(lot.vencido ? 'Vencido' : 'Vence pronto', lot.vencido ? 'critical' : 'warning')
+  ), 'Tus lotes vigentes no tienen vencimientos próximos.'));
 
   return {
     node: group('panel-content', heading, upcoming),

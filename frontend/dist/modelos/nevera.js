@@ -104,6 +104,7 @@ export function createModel(request) {
       remove: id => remove('/usuarios', id)
     },
     inventory: {
+      summary: () => read('/inventario/resumen'),
       list: filters => request(inventoryUrl(filters)),
       get: id => read(byId('/inventario', id)),
       save: (id, fields) => save('/inventario', id, lotPayload(fields)),
@@ -141,16 +142,4 @@ export function createModel(request) {
       remove: (kind, id) => changeCatalog(kind, remove('/' + kind, id))
     }
   };
-}
-
-export function summarizeLots(lots) {
-  const now = Date.now();
-  const limit = now + 72 * 60 * 60 * 1000;
-  const active = lots.filter(lot => lot.cantidad > 0);
-  const expired = active.filter(lot => lot.fecha_vencimiento && Date.parse(lot.fecha_vencimiento) < now);
-  const soon = active.filter(lot => {
-    const date = Date.parse(lot.fecha_vencimiento);
-    return date >= now && date <= limit;
-  });
-  return { total: active.length, expired, soon };
 }
