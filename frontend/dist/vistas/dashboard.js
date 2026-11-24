@@ -155,7 +155,7 @@ function planDetails(plan, patterns) {
   };
 }
 
-function plans(items, suggestions, { onEdit, onDetail, onDelete, onViewLot }) {
+function plans(items, suggestions, { unusedPatterns, onEdit, onDetail, onDelete, onDeletePattern, onViewLot }) {
   const plansSection = section('Mis planes', action('Nuevo plan', () => onEdit(), 'primary button-add'));
   plansSection.append(list(items, plan => row(plan.nombre_receta, plan.ingrediente_nombre, [
     action('Ver plan', () => onDetail(plan._id), 'text-button button-view'),
@@ -172,7 +172,17 @@ function plans(items, suggestions, { onEdit, onDetail, onDelete, onViewLot }) {
         : action('Crear plan', () => onEdit(null, idea), 'secondary button-add')
     ]
   ), 'Asocia un ingrediente para sugerencias a un lote con existencias en Inventario.'));
-  return group('panel-content', plansSection, suggestionsSection);
+  const panel = group('panel-content', plansSection, suggestionsSection);
+  if (unusedPatterns.length) {
+    const patternsSection = section('Patrones sin uso');
+    patternsSection.append(list(unusedPatterns, pattern => {
+      const remove = action('Eliminar patrón', () => onDeletePattern(pattern._id, busy => { remove.disabled = busy; }),
+        'text-button danger');
+      return row(patternSummary(pattern), pattern._id, [remove]);
+    }));
+    panel.append(patternsSection);
+  }
+  return panel;
 }
 
 function alerts(items, { pagina, hay_siguiente }, filters, { onToggle, onDelete, onViewLot, onFilter, onPage }) {

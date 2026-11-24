@@ -1122,6 +1122,16 @@ test('El servidor local carga el frontend MVC y permite usar planes, avisos, cat
   await pagina.locator('#detail-dialog').getByText(/Compra cada 7 días/).waitFor();
   await pagina.locator('#detail-dialog').getByRole('button', { name: 'Cerrar' }).click();
 
+  const borrarPatron = pagina.getByRole('button', { name: 'Eliminar patrón', exact: true });
+  assert.equal(await borrarPatron.count(), 0);
+  await plan.getByRole('button', { name: 'Eliminar', exact: true }).click();
+  const confirmar = pagina.locator('#delete-dialog');
+  await confirmar.getByRole('button', { name: 'Eliminar plan', exact: true }).click();
+  await borrarPatron.click();
+  await confirmar.getByRole('button', { name: 'Eliminar patrón', exact: true }).click();
+  await pagina.getByText('Patrón predictivo eliminado exitosamente', { exact: true }).waitFor();
+  await pagina.getByRole('heading', { name: 'Patrones sin uso' }).waitFor({ state: 'hidden' });
+
   await irA('alerts');
   const filaAviso = pagina.locator('.feature-row').filter({ hasText: aviso.mensaje });
   await filaAviso.getByRole('button', { name: 'Marcar como leída' }).click();

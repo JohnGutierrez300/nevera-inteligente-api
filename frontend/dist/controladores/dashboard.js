@@ -45,8 +45,8 @@ export function createDashboardController({
     }
   }
 
-  function remove(title, message, label, send) {
-    dialogs.confirm(title, message + ' Esta acción no se puede deshacer.', label, () => mutate(send));
+  function remove(title, message, label, send, setBusy) {
+    dialogs.confirm(title, message + ' Esta acción no se puede deshacer.', label, () => mutate(send, setBusy));
   }
 
   async function loadNotifications() {
@@ -112,11 +112,15 @@ export function createDashboardController({
     const [items, patterns, suggestions] = await Promise.all([
       model.plans.list(), model.plans.patterns(), model.plans.suggestions()
     ]);
+    const used = new Set(items.map(plan => plan.patron_predictivo_id));
     return view.plans(items, suggestions, {
+      unusedPatterns: patterns.filter(pattern => !used.has(pattern._id)),
       onEdit: (plan, suggestion) => editPlan(plan, suggestion, patterns, items),
       onDetail: id => planDetail(id, patterns),
       onDelete: plan => remove('¿Eliminar este plan?', 'Se eliminará el plan ' + plan.nombre_receta + '.',
         'Eliminar plan', () => model.plans.remove(plan._id)),
+      onDeletePattern: (id, setBusy) => remove('¿Eliminar este patrón?', 'Se eliminará el patrón de compra sin uso.',
+        'Eliminar patrón', () => model.plans.removePattern(id), setBusy),
       onViewLot: openLotDetail
     });
   }

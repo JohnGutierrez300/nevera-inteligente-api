@@ -115,7 +115,8 @@ export function createModel(request) {
       suggestions: () => read('/meal_preps/sugerencias'),
       patterns: () => read('/patrones_predictivos'),
       save: (id, fields, createPattern) => save('/meal_preps', id, planPayload(fields, createPattern)),
-      remove: id => remove('/meal_preps', id)
+      remove: id => remove('/meal_preps', id),
+      removePattern: id => remove('/patrones_predictivos', id)
     },
     notifications: {
       summary: revision => read('/notificaciones/resumen' + (revision === undefined ? '' : '?' + new URLSearchParams({ revision }))),
