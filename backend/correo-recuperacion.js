@@ -1,7 +1,15 @@
 const nodemailer = require('nodemailer');
+const { setTimeout: pausa } = require('node:timers/promises');
 
 const URL_TOKEN_GMAIL = 'https://oauth2.googleapis.com/token';
 const URL_ENVIO_GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
+const ESTADOS_HTTP_TEMPORALES = new Set([408, 429, 500, 502, 503, 504]);
+const FALLOS_RED_TEMPORALES = new Set([
+  'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET'
+]);
+const ESPERA_MINIMA_REINTENTO_MS = 250;
+const ESPERA_MAXIMA_REINTENTO_MS = 5000;
 
 function configurarCorreo(env = process.env) {
   const remitente = env.GMAIL_USER?.trim();
@@ -27,8 +35,25 @@ function configurarCorreo(env = process.env) {
   return clave ? { remitente, enlace, clave } : null;
 }
 
-function errorGmail(code) {
-  return Object.assign(new Error('Gmail no pudo completar la solicitud.'), { code });
+function errorGmail(code, respuesta) {
+  return Object.assign(new Error('Gmail no pudo completar la solicitud.'), {
+    code,
+    estadoCorreo: respuesta?.status,
+    reintentarEn: respuesta?.headers.get('Retry-After')
+  });
+}
+
+function esperaReintento(error) {
+  const temporal = ESTADOS_HTTP_TEMPORALES.has(error.estadoCorreo) ||
+    (Number.isInteger(error.responseCode) && error.responseCode >= 400 && error.responseCode < 500) ||
+    error.name === 'TimeoutError' || FALLOS_RED_TEMPORALES.has(error.code) ||
+    FALLOS_RED_TEMPORALES.has(error.cause?.code);
+  if (!temporal) return null;
+
+  const espera = error.reintentarEn;
+  if (!espera) return ESPERA_MINIMA_REINTENTO_MS;
+  const milisegundos = /^\d+$/.test(espera) ? Number(espera) * 1000 : Date.parse(espera) - Date.now();
+  return Math.max(ESPERA_MINIMA_REINTENTO_MS, Number.isNaN(milisegundos) ? 0 : milisegundos);
 }
 
 async function solicitarTokenGmail(parametros) {
@@ -40,7 +65,7 @@ async function solicitarTokenGmail(parametros) {
   });
   if (!respuesta.ok) {
     await respuesta.body?.cancel().catch(() => {});
-    throw errorGmail('GMAIL_TOKEN_' + respuesta.status);
+    throw errorGmail('GMAIL_TOKEN_' + respuesta.status, respuesta);
   }
   return respuesta.json();
 }
@@ -59,7 +84,7 @@ async function enviarPorApi(mensaje, oauth) {
     signal: AbortSignal.timeout(10_000)
   });
   await respuesta.body?.cancel().catch(() => {});
-  if (!respuesta.ok) throw errorGmail('GMAIL_ENVIO_' + respuesta.status);
+  if (!respuesta.ok) throw errorGmail('GMAIL_ENVIO_' + respuesta.status, respuesta);
 }
 
 async function enviarCorreoRecuperacion(configuracion, email, enlace, codigo) {
@@ -76,10 +101,18 @@ async function enviarCorreoRecuperacion(configuracion, email, enlace, codigo) {
       'Si no solicitaste el cambio, puedes ignorar este correo.'
     ].join('\n\n')
   };
-  if (configuracion.oauth) {
-    await enviarPorApi(mensaje, configuracion.oauth);
-    return;
+  try {
+    await enviarMensaje(configuracion, mensaje);
+  } catch (error) {
+    const espera = esperaReintento(error);
+    if (espera === null || espera > ESPERA_MAXIMA_REINTENTO_MS) throw error;
+    await pausa(espera);
+    await enviarMensaje(configuracion, mensaje);
   }
+}
+
+async function enviarMensaje(configuracion, mensaje) {
+  if (configuracion.oauth) return enviarPorApi(mensaje, configuracion.oauth);
   const transporte = nodemailer.createTransport({
     service: 'gmail',
     auth: { user: configuracion.remitente, pass: configuracion.clave },

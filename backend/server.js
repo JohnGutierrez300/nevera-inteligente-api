@@ -177,6 +177,7 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   recuperacion_codigo_intentos: { type: Number, select: false },
   recuperacion_vence: { type: Date, select: false },
   recuperacion_solicitada: { type: Date, select: false },
+  recuperacion_pendiente: { type: String, select: false },
   revision_notificaciones: { type: Number, select: false }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
 
@@ -683,7 +684,8 @@ const RECUPERACION_DURACION_MS = 30 * 60 * 1000;
 const RECUPERACION_ESPERA_MS = 2 * 60 * 1000;
 const LIMITE_INTENTOS_CODIGO = 5;
 const CAMPOS_RECUPERACION = {
-  recuperacion_hash: 1, recuperacion_vence: 1, recuperacion_codigo_hash: 1, recuperacion_codigo_intentos: 1
+  recuperacion_hash: 1, recuperacion_vence: 1, recuperacion_codigo_hash: 1,
+  recuperacion_codigo_intentos: 1, recuperacion_pendiente: 1
 };
 const correoValido = email => typeof email === 'string' && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -704,23 +706,31 @@ async function enviarRecuperacion(email, configuracion) {
       { recuperacion_solicitada: { $lte: new Date(ahora - RECUPERACION_ESPERA_MS) } }
     ]
   }, { $set: {
-    recuperacion_hash: hash,
-    recuperacion_codigo_hash: huellaCodigoRecuperacion(configuracion, hash, codigo).toString('hex'),
-    recuperacion_codigo_intentos: 0,
-    recuperacion_vence: new Date(ahora + RECUPERACION_DURACION_MS),
+    recuperacion_pendiente: hash,
     recuperacion_solicitada: new Date(ahora)
   } }).select('email').lean();
   if (!usuario) return;
 
+  const reserva = { _id: usuario._id, email: usuario.email, recuperacion_pendiente: hash };
+  const retirarReserva = { recuperacion_pendiente: 1 };
   configuracion.enlace.hash = new URLSearchParams({ restablecer: token }).toString();
   try {
     await enviarCorreoRecuperacion(configuracion, usuario.email, configuracion.enlace.href, codigo);
   } catch (error) {
-    await Usuario.updateOne({ _id: usuario._id, recuperacion_hash: hash }, {
-      $unset: CAMPOS_RECUPERACION
-    });
+    await Usuario.updateOne(reserva, { $unset: retirarReserva });
     throw error;
   }
+
+  // Mantiene el correo anterior vigente hasta la aceptación del nuevo.
+  await Usuario.updateOne(reserva, {
+    $set: {
+      recuperacion_hash: hash,
+      recuperacion_codigo_hash: huellaCodigoRecuperacion(configuracion, hash, codigo).toString('hex'),
+      recuperacion_codigo_intentos: 0,
+      recuperacion_vence: new Date(Date.now() + RECUPERACION_DURACION_MS)
+    },
+    $unset: retirarReserva
+  });
 }
 
 app.post('/api/usuarios/recuperar-contrasena', (req, res) => {
@@ -730,11 +740,13 @@ app.post('/api/usuarios/recuperar-contrasena', (req, res) => {
   }
   const configuracion = configurarCorreo();
   if (!configuracion) throw new ApiError(503, 'La recuperación por correo todavía no está disponible.');
+  const solicitud = randomUUID();
   void enviarRecuperacion(email, configuracion).catch(error => {
-    const codigo = typeof error.code === 'string' && /^[A-Z0-9_]{1,40}$/.test(error.code) ? error.code : error.name;
-    console.error('No se pudo procesar un correo de recuperación.', codigo);
+    const categoria = /^GMAIL_(?:TOKEN|ENVIO)_[1-5][0-9]{2}$/.test(error.code)
+      ? error.code : 'correo_recuperacion';
+    registrarErrorApi(solicitud, categoria, 500);
   });
-  res.set('Cache-Control', 'no-store');
+  res.set({ 'Cache-Control': 'no-store', 'X-Request-Id': solicitud });
   res.status(202).json(responseFormat(true, 'Si el correo está registrado, recibirás un enlace y un código de recuperación.'));
 });
 
@@ -1736,22 +1748,44 @@ mutacion('delete', '/api/notificaciones/:id', async req => {
 // ==========================================
 // MIDDLEWARE GLOBAL DE MANEJO DE ERRORES
 // ==========================================
+function registrarErrorApi(solicitud, categoria, estado) {
+  const registro = JSON.stringify({ evento: 'error_api', solicitud, categoria, estado });
+  if (estado >= 500) console.error(registro);
+  else console.warn(registro);
+}
+
+const mensajesErrorHttp = {
+  400: 'La solicitud no es válida.',
+  413: 'El cuerpo de la solicitud supera el tamaño permitido.',
+  415: 'El formato del cuerpo de la solicitud no es compatible.'
+};
+
 app.use((err, req, res, next) => {
-  console.error("Error detectado:", err.message);
-  if (err instanceof ApiError) {
-    return res.status(err.status).json(responseFormat(false, err.message, err.data));
+  const solicitud = randomUUID();
+  const responder = (estado, categoria, mensaje, datos) => {
+    registrarErrorApi(solicitud, categoria, estado);
+    return res.status(estado).json(responseFormat(false, mensaje, datos));
+  };
+
+  if (res.headersSent) {
+    registrarErrorApi(solicitud, 'respuesta_incompleta', 500);
+    return next(new Error('No se pudo completar la respuesta.'));
   }
+  res.set('X-Request-Id', solicitud);
+  if (err instanceof ApiError) return responder(err.status, 'regla_aplicacion', err.message, err.data);
 
   // Los rechazos de negocio conservan el contrato de respuesta de la API.
-  if (err instanceof mongoose.Error.ValidationError || err.code === 11000) {
-    return res.status(200).json(responseFormat(false, err.message));
+  if (err instanceof mongoose.Error.ValidationError) {
+    const campos = Object.keys(err.errors).filter(campo => /^[a-z][a-z0-9_.]{0,63}$/i.test(campo));
+    const mensaje = campos.length ? 'Revisa los siguientes campos. ' + campos.join(', ') + '.' : 'Revisa los datos ingresados.';
+    return responder(200, 'validacion_datos', mensaje);
   }
+  if (err.code === 11000) return responder(200, 'registro_duplicado', 'El identificador o alguno de los valores únicos ya existe.');
+  if (err.type === 'entity.parse.failed') return responder(400, 'json_invalido', 'Envía un cuerpo JSON válido.');
 
-  const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 500
-    ? err.status
-    : 500;
-  const message = status === 500 ? 'Error interno del servidor' : err.message;
-  res.status(status).json(responseFormat(false, message));
+  const estado = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+  if (estado === 500) return responder(500, 'error_interno', 'Error interno del servidor');
+  return responder(estado, 'solicitud_invalida', mensajesErrorHttp[estado] ?? mensajesErrorHttp[400]);
 });
 
 const HORA_MS = 60 * 60 * 1000;

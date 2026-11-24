@@ -40,8 +40,15 @@ let salida = '';
 let admin;
 let usuario;
 const correosEnviados = [];
+const eventosGmail = [];
 
 function simularGmail() {
+  let planEnvios = [];
+  process.on('message', ({ configurarGmail }) => {
+    if (!configurarGmail) return;
+    planEnvios = configurarGmail;
+    process.send({ eventoGmail: 'configurado' });
+  });
   const solicitar = globalThis.fetch;
   globalThis.fetch = async (url, opciones) => {
     if (url === 'https://oauth2.googleapis.com/token') {
@@ -53,6 +60,19 @@ function simularGmail() {
     }
     if (url === 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send') {
       if (opciones.headers.Authorization !== 'Bearer acceso-de-prueba') return new Response(null, { status: 401 });
+      const paso = planEnvios.shift();
+      if (paso?.esperar) {
+        await new Promise(resolve => {
+          const reanudar = ({ continuarEnvio }) => {
+            if (!continuarEnvio) return;
+            process.off('message', reanudar);
+            resolve();
+          };
+          process.on('message', reanudar);
+          process.send({ eventoGmail: 'en_espera' });
+        });
+      }
+      if (paso && paso.estado !== 200) return new Response(null, { status: paso.estado });
       process.send({ raw: JSON.parse(opciones.body).raw });
       return Response.json({ id: 'mensaje-de-prueba' });
     }
@@ -70,14 +90,37 @@ async function esperar(comprobar, mensaje) {
   assert.fail(mensaje + '\n' + salida);
 }
 
-async function leerCorreoRecuperacion(email) {
+async function esperarEventoGmail(evento) {
+  return esperar(() => {
+    const indice = eventosGmail.indexOf(evento);
+    return indice >= 0 && eventosGmail.splice(indice, 1)[0];
+  }, 'No se recibió el evento simulado de Gmail ' + evento);
+}
+
+async function prepararGmail(...pasos) {
+  servidor.send({ configurarGmail: pasos });
+  await esperarEventoGmail('configurado');
+}
+
+async function leerCorreoRecuperacion(email, esperarActivacion = true) {
   const raw = await esperar(() => correosEnviados.shift(), 'No se recibió el correo de recuperación de prueba.');
   const mime = Buffer.from(raw, 'base64url').toString('utf8').replace(/=\r?\n/g, '').replace(/=3D/g, '=');
   assert.ok(mime.includes(email));
   const enlace = /https:\/\/nevera-prueba\.example\/app\/#restablecer=([a-f0-9]{64})/.exec(mime);
   const codigo = /^([0-9]{6})\r?$/m.exec(mime);
   assert.ok(enlace && codigo, 'El correo debe incluir un enlace de recuperación y un código de seis dígitos.');
-  return { token: enlace[1], codigo: codigo[1] };
+  const token = enlace[1];
+  if (esperarActivacion) {
+    const cliente = await new MongoClient(mongoUri).connect();
+    try {
+      const usuarios = cliente.db().collection('usuarios');
+      await esperar(() => usuarios.findOne({ email, recuperacion_hash: huella(token) }),
+        'El correo de prueba no se activó tras el envío.');
+    } finally {
+      await cliente.close();
+    }
+  }
+  return { token, codigo: codigo[1] };
 }
 
 async function contadorIngreso(db, id) {
@@ -104,6 +147,7 @@ async function api(ruta, { method = 'GET', body, token, cookie, origin = baseUrl
     status: respuesta.status,
     cookie: respuesta.headers.get('set-cookie')?.split(';')[0],
     retryAfter: respuesta.headers.get('retry-after'),
+    solicitud: respuesta.headers.get('x-request-id'),
     ...(await respuesta.json())
   };
 }
@@ -186,7 +230,10 @@ before(async () => {
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe', 'ipc']
   });
-  servidor.on('message', mensaje => correosEnviados.push(mensaje.raw));
+  servidor.on('message', mensaje => {
+    if (mensaje.raw) correosEnviados.push(mensaje.raw);
+    if (mensaje.eventoGmail) eventosGmail.push(mensaje.eventoGmail);
+  });
   for (const stream of [servidor.stdout, servidor.stderr]) {
     stream.on('data', chunk => { salida += chunk; });
   }
@@ -1275,6 +1322,92 @@ test('El enlace y el código vencen juntos y solo uno puede restablecer la contr
   assert.deepEqual(resultados.map(resultado => resultado.status).sort(), [200, 400]);
   const ganador = resultados.findIndex(resultado => resultado.status === 200);
   assert.equal((await ingresar(claves[ganador])).status, 200);
+});
+
+test('El reenvío fallido conserva la recuperación anterior y un fallo temporal admite reintento', async t => {
+  const cuenta = datosCuenta('7022');
+  await correcto('/usuarios', { method: 'POST', body: cuenta });
+  const solicitar = () => api('/usuarios/recuperar-contrasena', { method: 'POST', body: { email: cuenta.email } });
+  const restablecer = token => api('/usuarios/restablecer-contrasena', {
+    method: 'POST', body: { token, password: otraClave }
+  });
+  const cliente = await new MongoClient(mongoUri).connect();
+  t.after(() => cliente.close());
+  const usuarios = cliente.db().collection('usuarios');
+  const filtro = { _id: cuenta.id };
+  const permitirReenvio = () => usuarios.updateOne(filtro, { $set: { recuperacion_solicitada: new Date(0) } });
+
+  assert.equal((await solicitar()).status, 202);
+  const anterior = await leerCorreoRecuperacion(cuenta.email);
+  const estadoAnterior = await usuarios.findOne(filtro);
+  await permitirReenvio();
+  await prepararGmail({ estado: 400 }, { estado: 200 });
+  const fallo = await solicitar();
+  assert.equal(fallo.status, 202);
+  await esperar(() => salida.includes(JSON.stringify({
+    evento: 'error_api', solicitud: fallo.solicitud, categoria: 'GMAIL_ENVIO_400', estado: 500
+  })), 'El fallo permanente de Gmail debe registrarse una vez sin reintento.');
+  const estadoDespues = await usuarios.findOne(filtro);
+  assert.equal(estadoDespues.recuperacion_pendiente, undefined);
+  for (const campo of ['recuperacion_hash', 'recuperacion_codigo_hash', 'recuperacion_codigo_intentos', 'recuperacion_vence']) {
+    assert.deepEqual(estadoDespues[campo], estadoAnterior[campo]);
+  }
+
+  await permitirReenvio();
+  await prepararGmail({ estado: 503 }, { estado: 200, esperar: true });
+  assert.equal((await solicitar()).status, 202);
+  await esperarEventoGmail('en_espera');
+  const pendiente = await usuarios.findOne(filtro);
+  assert.equal(pendiente.recuperacion_hash, huella(anterior.token));
+  assert.ok(pendiente.recuperacion_pendiente);
+  servidor.send({ continuarEnvio: true });
+  const actual = await leerCorreoRecuperacion(cuenta.email);
+  assert.equal((await restablecer(anterior.token)).status, 400);
+  assert.equal((await restablecer(actual.token)).status, 200);
+});
+
+test('Restablecer con el enlace activo cancela un reenvío aún pendiente', async t => {
+  const cuenta = datosCuenta('7023');
+  await correcto('/usuarios', { method: 'POST', body: cuenta });
+  const solicitar = () => api('/usuarios/recuperar-contrasena', { method: 'POST', body: { email: cuenta.email } });
+  const restablecer = token => api('/usuarios/restablecer-contrasena', {
+    method: 'POST', body: { token, password: otraClave }
+  });
+
+  assert.equal((await solicitar()).status, 202);
+  const anterior = await leerCorreoRecuperacion(cuenta.email);
+  const cliente = await new MongoClient(mongoUri).connect();
+  t.after(() => cliente.close());
+  const usuarios = cliente.db().collection('usuarios');
+  const filtro = { _id: cuenta.id };
+  await usuarios.updateOne(filtro, { $set: { recuperacion_solicitada: new Date(0) } });
+  await prepararGmail({ estado: 200, esperar: true });
+  assert.equal((await solicitar()).status, 202);
+  await esperarEventoGmail('en_espera');
+  try {
+    assert.equal((await restablecer(anterior.token)).status, 200);
+    const estado = await usuarios.findOne(filtro);
+    assert.equal(estado.recuperacion_pendiente, undefined);
+    assert.equal(estado.recuperacion_hash, undefined);
+  } finally {
+    servidor.send({ continuarEnvio: true });
+  }
+  const enviadoTarde = await leerCorreoRecuperacion(cuenta.email, false);
+  assert.equal((await restablecer(enviadoTarde.token)).status, 400);
+});
+
+test('Una solicitud con JSON inválido devuelve un identificador y un mensaje seguro', async () => {
+  const nota = 'marcador-local-de-prueba';
+  const respuesta = await fetch(baseUrl + '/api/usuarios', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: nota, signal: AbortSignal.timeout(6000)
+  });
+  assert.equal(respuesta.status, 400);
+  const solicitud = respuesta.headers.get('x-request-id');
+  assert.match(solicitud, /^[a-f0-9-]{36}$/);
+  assert.deepEqual(await respuesta.json(), { success: false, message: 'Envía un cuerpo JSON válido.', data: null });
+  await esperar(() => salida.includes(JSON.stringify({ evento: 'error_api', solicitud, categoria: 'json_invalido', estado: 400 })),
+    'No se registró el error de JSON con su identificador.');
+  assert.ok(!salida.includes(nota));
 });
 
 test('La ruta de salud detecta cuando MongoDB deja de responder', { timeout: 35_000 }, async () => {
