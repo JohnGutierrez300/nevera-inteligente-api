@@ -71,7 +71,8 @@ export function startApp() {
     onAdd: () => openLot(),
     onEdit: openLot,
     onSave: saveLot,
-    onDelete: confirmLotDeletion
+    onDelete: confirmLotDeletion,
+    onReload: reloadLotEditor
   });
   const dashboard = createDashboardController({
     model, dialogs, openLotDetail,
@@ -282,6 +283,17 @@ export function startApp() {
     }
   }
 
+  async function reloadLotEditor(id) {
+    if (!user || inventory.editorOpen) return;
+    const generation = viewRequest;
+    try {
+      const lot = await model.inventory.get(id);
+      if (generation === viewRequest) await openLot(lot);
+    } catch (error) {
+      if (generation === viewRequest) notice(error);
+    }
+  }
+
   async function openLotDetail(id) {
     if (!user || dialogs.detailsOpen) return;
     const generation = viewRequest;
@@ -302,13 +314,13 @@ export function startApp() {
     }
   }
 
-  async function changeLotStatus(id, status) {
+  async function changeLotStatus(id, status, version) {
     const active = user;
     if (!active) return;
     dialogs.setDetailBusy(true);
     dialogs.showDetailError();
     try {
-      const response = await model.inventory.setStatus(id, status);
+      const response = await model.inventory.setStatus(id, status, version);
       if (user !== active) return;
       dialogs.closeDetails();
       notice(response.message);
@@ -336,10 +348,10 @@ export function startApp() {
       if (id) {
         notice();
         dialogs.showUpdated();
-        void refreshUnread();
       } else {
         notice(response.message);
       }
+      void refreshUnread();
       await loadView();
     } catch (error) {
       if (user !== active) return;

@@ -1,13 +1,15 @@
 import { action, bindPasswords, byId, detailList, errorMessage, formValues, group, maskPasswords } from './componentes.js';
 
-export function showLotError(target, error, onConflict) {
+export function showLotError(target, error, onConflict, onReload = onConflict) {
   target.hidden = !error;
   target.textContent = error ? errorMessage(error) : '';
   const conflictId = error?.status === 409 && error.data?.inventario_id;
-  if (conflictId && onConflict) {
-    target.append(' ', action('Ver lote existente', () => {
+  const stale = error?.data?.conflicto === 'VERSION';
+  const showLot = stale ? onReload : onConflict;
+  if (conflictId && showLot) {
+    target.append(' ', action(stale ? 'Recargar lote' : 'Ver lote existente', () => {
       target.closest('dialog').close();
-      void onConflict(conflictId);
+      void showLot(conflictId);
     }, 'text-button button-view'));
   }
 }

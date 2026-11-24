@@ -11,7 +11,7 @@ info:
     - **Validación en vivo:** al pulsar *Try it out*, los campos de ID (ruta, query y campos foráneos del body) se validan mientras se escriben o al salir del campo, sin presionar *Execute* (✅ / ❌ bajo el campo).
     **Autenticación:** usa `POST /api/usuarios/login` y pega `data.token` en **Authorize**. Cada cuenta admite una sesión activa. Tras 7 minutos sin actividad, la sesión vence y la cuenta queda disponible para un nuevo inicio de sesión. La aplicación web registra las interacciones del usuario. Con Bearer, una solicitud autenticada cuenta como actividad y el token tiene una vigencia máxima de 24 horas. Las rutas privadas solo muestran los datos de la sesión. La lectura de catálogos es pública y las escrituras requieren un administrador configurado en `CATALOG_ADMIN_IDS`.
 
-    **Inventario:** se acumulan los lotes del mismo producto si coinciden el usuario, la nevera, la unidad, el estado, el vencimiento y el ingrediente opcional. Si una edición hace que el lote coincida con otro, la API responde `409` e indica el lote existente. Si omites la nevera al crear, se usa NEVERA-01. Las alertas se revisan al iniciar el servidor y cada hora mientras está activo, para lotes en nevera que vencen en las próximas 72 horas.
+    **Inventario:** se acumulan los lotes del mismo producto si coinciden el usuario, la nevera, la unidad, el estado, el vencimiento y el ingrediente opcional. Si una edición hace que el lote coincida con otro, la API responde `409` e indica el lote existente. Si omites la nevera al crear, se usa NEVERA-01. Los avisos de lotes en nevera que vencen en las próximas 72 horas se generan al guardar el lote y también se revisan al iniciar el servidor y cada hora mientras está activo.
   version: '1.4.0'
 servers:
   - url: /
@@ -747,6 +747,7 @@ paths:
       tags: [Inventario]
       operationId: addInventoryItem
       summary: Agregar alimento a la nevera o acumular cantidad (Valida usuario, producto y unidad)
+      description: La respuesta incluye la versión del lote. Un lote nuevo comienza en 0 y cada acumulación incrementa su versión.
       requestBody:
         required: true
         content:
@@ -836,6 +837,7 @@ paths:
                     cantidad: 2
                     fecha_vencimiento: '2026-12-31T00:00:00.000Z'
                     estado: EN_NEVERA
+                    version: 0
                 paginacion:
                   pagina: 1
                   limite: 25
@@ -858,6 +860,7 @@ paths:
       tags: [Inventario]
       operationId: getInventoryItem
       summary: Consultar detalle de un alimento por ID
+      description: El lote incluye su versión actual. Puedes enviarla al editar para detectar cambios concurrentes.
       responses:
         "200":
           $ref: '#/components/responses/OkWithLookup'
@@ -871,7 +874,7 @@ paths:
       tags: [Inventario]
       operationId: updateInventoryItem
       summary: Actualizar alimento del inventario (Valida los IDs enviados) y registrar en historial
-      description: Envía al menos un campo para actualizar. Si el cambio hace que el lote coincida con otro, se rechaza la edición.
+      description: Envía los campos que quieras editar y, opcionalmente, la versión del lote que consultaste. El cambio se rechaza si la versión quedó desactualizada o si el lote pasaría a coincidir con otro.
       requestBody:
         required: true
         content:
@@ -890,7 +893,7 @@ paths:
         "403":
           $ref: '#/components/responses/Forbidden'
         "409":
-          description: Ya existe un lote con los mismos datos. La edición se revierte y se devuelve el ID del otro lote.
+          description: La versión quedó desactualizada o ya existe un lote con los mismos datos. Se devuelve el ID del lote que debes consultar.
           content:
             application/json:
               schema:
@@ -904,6 +907,10 @@ paths:
                         properties:
                           inventario_id:
                             $ref: '#/components/schemas/ObjectId'
+                          conflicto:
+                            type: string
+                            enum: [VERSION]
+                            description: Indica que el lote cambió después de la última consulta.
     delete:
       security:
         - bearerAuth: []
@@ -1770,6 +1777,11 @@ components:
       minProperties: 1
       description: Envía al menos un campo editable. Los IDs foráneos enviados se validan en tiempo real (HTTP 200 con `success: false` si no existen).
       properties:
+        version:
+          type: integer
+          minimum: 0
+          description: Versión opcional obtenida al consultar el lote. Si ya cambió, se devuelve HTTP 409.
+          example: 0
         user_nombre:
           type: string
           description: Si se envía, debe coincidir con el ID del usuario de la sesión.

@@ -55,7 +55,7 @@ function fillSelect(form, name, records, label, selected, placeholder = 'Selecci
   select.value = selected || '';
 }
 
-export function createInventoryView({ onFilter, onPage, onView, onAdd, onEdit, onSave, onDelete }) {
+export function createInventoryView({ onFilter, onPage, onView, onAdd, onEdit, onSave, onDelete, onReload }) {
   const filters = byId('filters');
   const pagination = byId('inventory-pagination');
   const previous = byId('inventory-previous');
@@ -66,6 +66,7 @@ export function createInventoryView({ onFilter, onPage, onView, onAdd, onEdit, o
   const save = byId('save-lot');
   const cancel = byId('cancel');
   const errorTarget = byId('lot-error');
+  let editing = null;
 
   filters.addEventListener('submit', event => {
     event.preventDefault();
@@ -79,7 +80,17 @@ export function createInventoryView({ onFilter, onPage, onView, onAdd, onEdit, o
   dialog.addEventListener('cancel', event => { if (save.disabled) event.preventDefault(); });
   form.addEventListener('submit', event => {
     event.preventDefault();
-    void onSave(formValues(form));
+    const fields = formValues(form);
+    if (!editing) {
+      void onSave(fields);
+      return;
+    }
+    const changes = Object.fromEntries(Object.entries(fields).filter(([key, value]) => value !== editing.fields[key]));
+    if (!Object.keys(changes).length) {
+      showLotError(errorTarget, new Error('Cambia al menos un dato del lote para guardar.'));
+      return;
+    }
+    void onSave({ ...changes, version: editing.version });
   });
 
   return {
@@ -103,7 +114,7 @@ export function createInventoryView({ onFilter, onPage, onView, onAdd, onEdit, o
     setAddBusy(busy) { add.disabled = busy; },
     setSaveBusy(busy) { save.disabled = cancel.disabled = busy; },
     closeEditor() { if (dialog.open) dialog.close(); },
-    showError(error) { showLotError(errorTarget, error, onView); },
+    showError(error) { showLotError(errorTarget, error, onView, onReload); },
     openEditor(lot, { products, units, ingredients }) {
       form.reset();
       showLotError(errorTarget);
@@ -121,6 +132,7 @@ export function createInventoryView({ onFilter, onPage, onView, onAdd, onEdit, o
           if (Number.isFinite(bogota.getTime())) vencimiento.value = bogota.toISOString().slice(0, -1);
         }
       }
+      editing = lot ? { fields: formValues(form), version: lot.version ?? 0 } : null;
       dialog.showModal();
     },
     clear() {
@@ -136,8 +148,8 @@ export function lotDetails(lot, products, { onEdit, onStatus }) {
   const buttons = [action('Editar lote', () => onEdit(lot), 'text-button button-edit')];
   if (lot.estado === 'EN_NEVERA') {
     buttons.push(
-      action('Marcar consumido', () => onStatus(lot._id, 'CONSUMIDO'), 'primary'),
-      action('Marcar desperdiciado', () => onStatus(lot._id, 'DESPERDICIADO'), 'secondary')
+      action('Marcar consumido', () => onStatus(lot._id, 'CONSUMIDO', lot.version ?? 0), 'primary'),
+      action('Marcar desperdiciado', () => onStatus(lot._id, 'DESPERDICIADO', lot.version ?? 0), 'secondary')
     );
   }
   return {

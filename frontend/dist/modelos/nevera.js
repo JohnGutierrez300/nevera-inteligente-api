@@ -34,12 +34,13 @@ function inventoryUrl(filters) {
 }
 
 function lotPayload(fields) {
-  return {
-    ...fields,
-    cantidad: Number(fields.cantidad),
-    fecha_vencimiento: fields.fecha_vencimiento ? fields.fecha_vencimiento + '-05:00' : null,
-    ingrediente_nombre: fields.ingrediente_nombre || null
-  };
+  const payload = { ...fields };
+  if (Object.hasOwn(fields, 'cantidad')) payload.cantidad = Number(fields.cantidad);
+  if (Object.hasOwn(fields, 'fecha_vencimiento')) {
+    payload.fecha_vencimiento = fields.fecha_vencimiento ? fields.fecha_vencimiento + '-05:00' : null;
+  }
+  if (Object.hasOwn(fields, 'ingrediente_nombre')) payload.ingrediente_nombre = fields.ingrediente_nombre || null;
+  return payload;
 }
 
 function planPayload(fields, createPattern) {
@@ -106,7 +107,7 @@ export function createModel(request) {
       list: filters => request(inventoryUrl(filters)),
       get: id => read(byId('/inventario', id)),
       save: (id, fields) => save('/inventario', id, lotPayload(fields)),
-      setStatus: (id, estado) => request(byId('/inventario', id), 'PUT', { estado }),
+      setStatus: (id, estado, version) => request(byId('/inventario', id), 'PUT', { estado, version }),
       remove: id => remove('/inventario', id)
     },
     plans: {

@@ -243,6 +243,7 @@ const Inventario = mongoose.model('Inventario', new mongoose.Schema({
   cantidad: { type: Number, required: true, min: 0, validate: Number.isFinite },
   fecha_vencimiento: { type: Date, default: null },
   estado: { type: String, enum: ESTADOS_INVENTARIO, default: 'EN_NEVERA' },
+  version: { type: Number, default: 0 },
   alerta_vencimiento_generada: { type: Date, select: false }
 }, { collection: 'inventario', versionKey: false }));
 Inventario.schema.index({ user_nombre: 1, nevera_id: 1, producto_id: 1, estado: 1, unidad_medida_nombre: 1, fecha_vencimiento: 1 });
@@ -1206,6 +1207,15 @@ function cuerpoInventario(cuerpo) {
   return cuerpo;
 }
 
+function exigirEstadoInventario(estado) {
+  if (!ESTADOS_INVENTARIO.includes(estado)) throw new ApiError(400, 'Estado de inventario inválido.');
+}
+
+function presentarLote(lote) {
+  const { alerta_vencimiento_generada, ...datos } = lote;
+  return { ...datos, version: datos.version ?? 0 };
+}
+
 function identidadLote(lote) {
   const { user_nombre, nevera_id, producto_id, unidad_medida_nombre, estado } = lote;
   return {
@@ -1228,9 +1238,8 @@ function opcionesPaginacion({ pagina, limite }) {
 }
 
 function registrarHistorial(item, accion, detalles) {
-  const { alerta_vencimiento_generada, ...snapshot } = item.toObject();
   return HistorialInventario.create({
-    inventario_id: item._id, snapshot_datos: snapshot, accion, detalles
+    inventario_id: item._id, snapshot_datos: presentarLote(item.toObject()), accion, detalles
   });
 }
 
@@ -1244,6 +1253,7 @@ mutacion('post', '/api/inventario', async req => {
   const faltantes = ['producto_id', 'unidad_medida_nombre', 'cantidad']
     .filter(campo => cuerpo[campo] == null || cuerpo[campo] === '');
   if (faltantes.length) throw new ApiError(400, `Completa estos campos del lote: ${faltantes.join(', ')}.`);
+  exigirEstadoInventario(estado);
   const lote = {
     user_nombre: req.usuarioId,
     nevera_id,
@@ -1256,22 +1266,25 @@ mutacion('post', '/api/inventario', async req => {
   await validarReferencias(Inventario, lote);
   const entrada = new Inventario({ ...lote, cantidad });
   await entrada.validate();
-  const itemInventario = await Inventario.findOne(identidadLote(entrada)).sort({ _id: 1 });
+  const itemInventario = await Inventario.findOne(identidadLote(entrada)).sort({ _id: 1 }).select('+alerta_vencimiento_generada');
 
   if (itemInventario) {
     itemInventario.cantidad += entrada.cantidad;
+    itemInventario.version = (itemInventario.version ?? 0) + 1;
     await itemInventario.save();
 
     await registrarHistorial(itemInventario, 'ACTUALIZADO',
       `Se sumaron ${entrada.cantidad} unidades al lote de la nevera ${nevera_id}`);
+    await revisarVencimientoGuardado(itemInventario);
 
-    return responseFormat(true, 'El producto ya existía en la nevera; se actualizó la cantidad acumulada.', itemInventario);
+    return responseFormat(true, 'El producto ya existía en la nevera; se actualizó la cantidad acumulada.', presentarLote(itemInventario.toObject()));
   }
 
   const nuevoItem = await entrada.save();
   await registrarHistorial(nuevoItem, 'CREADO', `Se agregó el alimento a la nevera ${nevera_id}`);
+  await revisarVencimientoGuardado(nuevoItem);
 
-  return responseFormat(true, 'Alimento agregado al inventario', nuevoItem);
+  return responseFormat(true, 'Alimento agregado al inventario', presentarLote(nuevoItem.toObject()));
 });
 
 app.get('/api/inventario', async (req, res, next) => {
@@ -1292,7 +1305,7 @@ app.get('/api/inventario', async (req, res, next) => {
       filtro.nevera_id = nevera_id;
     }
     if (estado !== undefined) {
-      if (!ESTADOS_INVENTARIO.includes(estado)) throw new ApiError(400, 'Estado de inventario inválido');
+      exigirEstadoInventario(estado);
       filtro.estado = estado;
     }
     if (vence_desde !== undefined || vence_hasta !== undefined) {
@@ -1316,11 +1329,11 @@ app.get('/api/inventario', async (req, res, next) => {
       consulta = Inventario.find(filtro).sort({ _id: 1 }).lean();
     }
     const paginacion = opcionesPaginacion(req.query);
-    if (!paginacion) return res.json(responseFormat(true, 'Lista de inventario obtenida', await consulta));
+    if (!paginacion) return res.json(responseFormat(true, 'Lista de inventario obtenida', (await consulta).map(presentarLote)));
     const { pagina, limite, salto } = paginacion;
     const inventarios = await consulta.skip(salto).limit(limite + 1);
     res.json({
-      ...responseFormat(true, 'Lista de inventario obtenida', inventarios.slice(0, limite)),
+      ...responseFormat(true, 'Lista de inventario obtenida', inventarios.slice(0, limite).map(presentarLote)),
       paginacion: { pagina, limite, hay_siguiente: inventarios.length > limite }
     });
   } catch (error) {
@@ -1331,7 +1344,7 @@ app.get('/api/inventario', async (req, res, next) => {
 app.get('/api/inventario/:itemId', async (req, res, next) => {
   try {
     const item = await obtenerOFallar(Inventario, req.params.itemId, { user_nombre: req.usuarioId });
-    res.status(200).json(responseFormat(true, 'Detalle del alimento obtenido', item));
+    res.status(200).json(responseFormat(true, 'Detalle del alimento obtenido', presentarLote(item)));
   } catch (error) {
     next(error);
   }
@@ -1344,17 +1357,28 @@ mutacion('put', '/api/inventario/:itemId', async req => {
   const cambios = Object.fromEntries(campos.filter(campo => Object.hasOwn(cuerpo, campo))
     .map(campo => [campo, cuerpo[campo]]));
   if (!Object.keys(cambios).length) throw new ApiError(400, 'Envía al menos un campo del lote para actualizar.');
+  if (Object.hasOwn(cambios, 'estado')) exigirEstadoInventario(cambios.estado);
+  if (cuerpo.version !== undefined && (!Number.isSafeInteger(cuerpo.version) || cuerpo.version < 0)) {
+    throw new ApiError(400, 'La versión del lote debe ser un entero no negativo.');
+  }
   if (cambios.fecha_vencimiento != null) {
     cambios.fecha_vencimiento = fechaInventario(cambios.fecha_vencimiento, 'fecha_vencimiento');
   }
   if (cambios.ingrediente_nombre === '') cambios.ingrediente_nombre = null;
   const filtro = { user_nombre: req.usuarioId };
   const anterior = await obtenerOFallar(Inventario, req.params.itemId, filtro);
+  const version = anterior.version ?? 0;
+  if (cuerpo.version !== undefined && cuerpo.version !== version) {
+    throw new ApiError(409, 'El lote cambió desde que lo consultaste. Recárgalo antes de volver a editar.', {
+      conflicto: 'VERSION', inventario_id: anterior._id
+    });
+  }
   await validarReferencias(Inventario, cambios);
 
   const guardado = await Inventario.findOneAndUpdate(
-    { ...filtro, _id: req.params.itemId }, { $set: cambios }, { returnDocument: 'after', runValidators: true }
-  ).lean();
+    { ...filtro, _id: req.params.itemId }, { $set: { ...cambios, version: version + 1 } },
+    { returnDocument: 'after', runValidators: true }
+  ).select('+alerta_vencimiento_generada').lean();
   // La transacción revierte la edición si el lote pasa a coincidir con otro.
   const identidad = identidadLote(guardado);
   if (!isDeepStrictEqual(identidad, identidadLote(anterior))) {
@@ -1370,7 +1394,10 @@ mutacion('put', '/api/inventario/:itemId', async req => {
   if (anterior.fecha_vencimiento?.getTime() !== guardado.fecha_vencimiento?.getTime()
       || anterior.nevera_id !== guardado.nevera_id || anterior.producto_id !== guardado.producto_id
       || anterior.estado !== guardado.estado || (anterior.cantidad > 0) !== (guardado.cantidad > 0)) {
-    await Inventario.updateOne({ ...filtro, _id: guardado._id }, { $unset: { alerta_vencimiento_generada: 1 } });
+    if (guardado.alerta_vencimiento_generada !== undefined) {
+      await Inventario.updateOne({ ...filtro, _id: guardado._id }, { $unset: { alerta_vencimiento_generada: 1 } });
+      delete guardado.alerta_vencimiento_generada;
+    }
     await desactualizarAvisos(req.usuarioId, { inventario_id: guardado._id, tipo: 'VENCIMIENTO' });
   }
 
@@ -1378,7 +1405,9 @@ mutacion('put', '/api/inventario/:itemId', async req => {
   await registrarHistorial(itemActualizado, 'ACTUALIZADO',
     `Se actualizó el alimento de la nevera ${itemActualizado.nevera_id}`);
 
-  return responseFormat(true, 'Alimento actualizado exitosamente', itemActualizado);
+  await revisarVencimientoGuardado(guardado);
+
+  return responseFormat(true, 'Alimento actualizado exitosamente', presentarLote(itemActualizado.toObject()));
 });
 
 mutacion('delete', '/api/inventario/:itemId', async req => {
@@ -1387,7 +1416,7 @@ mutacion('delete', '/api/inventario/:itemId', async req => {
   await desactualizarAvisos(req.usuarioId, { inventario_id: itemEliminado._id });
   await registrarHistorial(itemEliminado, 'ELIMINADO', 'Se eliminó físicamente el alimento del inventario');
 
-  return responseFormat(true, 'Alimento eliminado exitosamente', itemEliminado);
+  return responseFormat(true, 'Alimento eliminado exitosamente', presentarLote(itemEliminado.toObject()));
 });
 
 // 7. Historial de Inventario
@@ -1789,33 +1818,49 @@ app.use((err, req, res, next) => {
 });
 
 const HORA_MS = 60 * 60 * 1000;
-async function generarAlertasVencimiento() {
-  const ahora = new Date();
-  const filtro = {
+
+function filtroAlertasVencimiento(ahora) {
+  return {
     estado: 'EN_NEVERA',
     cantidad: { $gt: 0 },
     fecha_vencimiento: { $gte: ahora, $lte: new Date(ahora.getTime() + 72 * HORA_MS) },
     $expr: { $ne: [{ $ifNull: ['$alerta_vencimiento_generada', null] }, '$fecha_vencimiento'] }
   };
+}
+
+async function crearAlertaVencimiento(_id, filtro) {
+  const item = await Inventario.findOneAndUpdate(
+    { ...filtro, _id },
+    [{ $set: { alerta_vencimiento_generada: '$fecha_vencimiento' } }],
+    { returnDocument: 'after', updatePipeline: true }
+  ).lean();
+  if (!item) return;
+  const producto = await Producto.findById(item.producto_id).select('nombre').lean();
+  await crearAviso({
+    user_nombre: item.user_nombre,
+    nevera_id: item.nevera_id,
+    inventario_id: item._id,
+    fecha_vencimiento: item.fecha_vencimiento,
+    tipo: 'VENCIMIENTO',
+    mensaje: `${producto?.nombre ?? item.producto_id} vence el ${formatearVencimiento.format(item.fecha_vencimiento)} (hora de Colombia) en la nevera ${item.nevera_id}.`
+  });
+}
+
+async function revisarVencimientoGuardado(lote) {
+  if (lote.estado !== 'EN_NEVERA' || !(lote.cantidad > 0) || !lote.fecha_vencimiento) return;
+  if (lote.alerta_vencimiento_generada?.getTime() === lote.fecha_vencimiento.getTime()) return;
+  const filtro = filtroAlertasVencimiento(new Date());
+  const { $gte, $lte } = filtro.fecha_vencimiento;
+  if (lote.fecha_vencimiento >= $gte && lote.fecha_vencimiento <= $lte) {
+    await crearAlertaVencimiento(lote._id, filtro);
+  }
+}
+
+async function generarAlertasVencimiento() {
+  const filtro = filtroAlertasVencimiento(new Date());
   const pendientes = Inventario.find(filtro).select('_id').lean().cursor();
   for await (const { _id } of pendientes) {
-    await enTransaccion(async () => {
-      const item = await Inventario.findOneAndUpdate(
-        { ...filtro, _id },
-        [{ $set: { alerta_vencimiento_generada: '$fecha_vencimiento' } }],
-        { returnDocument: 'after', updatePipeline: true }
-      );
-      if (!item) return;
-      const producto = await Producto.findById(item.producto_id).select('nombre').lean();
-      await crearAviso({
-        user_nombre: item.user_nombre,
-        nevera_id: item.nevera_id,
-        inventario_id: item._id,
-        fecha_vencimiento: item.fecha_vencimiento,
-        tipo: 'VENCIMIENTO',
-        mensaje: `${producto?.nombre ?? item.producto_id} vence el ${formatearVencimiento.format(item.fecha_vencimiento)} (hora de Colombia) en la nevera ${item.nevera_id}.`
-      });
-    });
+    await enTransaccion(() => crearAlertaVencimiento(_id, filtro));
   }
 }
 

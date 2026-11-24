@@ -367,6 +367,7 @@ test('Un alta simultánea acumula la cantidad y una edición duplicada se revier
     agregar(datos), agregar({ ...datos, cantidad: 2, fecha_vencimiento: '2032-02-29T15:00:00Z' })
   ]);
   assert.equal(primero._id, acumulado._id);
+  assert.deepEqual([primero.version, acumulado.version].sort(), [0, 1]);
   assert.equal((await correcto('/inventario/' + primero._id, usuario)).cantidad, 3);
 
   const otro = await agregar({ ...datos, fecha_vencimiento: '2032-03-01T15:00:00Z' });
@@ -392,10 +393,12 @@ test('Los lotes distinguen ingredientes y respetan registros anteriores sin camp
   const cliente = await new MongoClient(mongoUri).connect();
   try {
     const { insertedId } = await cliente.db().collection('inventario').insertOne(datos);
+    assert.equal((await correcto('/inventario/' + insertedId, usuario)).version, 0);
     const conIngrediente = await agregar({ nevera_id: datos.nevera_id, ingrediente_nombre: 'Leche' });
     const sinIngrediente = await agregar({ nevera_id: datos.nevera_id });
     assert.equal(sinIngrediente._id, String(insertedId));
     assert.equal(sinIngrediente.cantidad, 2);
+    assert.equal(sinIngrediente.version, 1);
     const conflicto = await api('/inventario/' + conIngrediente._id, {
       ...usuario, method: 'PUT', body: { ingrediente_nombre: null }
     });
@@ -406,7 +409,66 @@ test('Los lotes distinguen ingredientes y respetan registros anteriores sin camp
   }
 });
 
-test('Inventario responde 400 por fechas inválidas y solicitudes incompletas', async () => {
+test('Los avisos se generan al guardar lotes próximos a vencer y se mantienen sin duplicados', async () => {
+  const id = '7036';
+  await correcto('/usuarios', { method: 'POST', body: datosCuenta(id) });
+  const auth = await sesion(id);
+  const fecha = new Date(Date.now() + 15 * 60_000).toISOString();
+  const agregarProximo = (nevera_id, cantidad = 1) => agregar({ nevera_id, cantidad, fecha_vencimiento: fecha }, auth);
+  const avisos = () => correcto('/notificaciones?tipo=VENCIMIENTO', auth);
+
+  const lote = await agregarProximo('AVISO-INMEDIATO');
+  const [primero] = await avisos();
+  assert.equal(primero.inventario_id, lote._id);
+  assert.equal(primero.fecha_vencimiento, fecha);
+  assert.ok(!Object.hasOwn(lote, 'alerta_vencimiento_generada'));
+  await Promise.all([agregarProximo(lote.nevera_id), agregarProximo(lote.nevera_id)]);
+  assert.deepEqual((await avisos()).map(aviso => aviso._id), [primero._id]);
+
+  const sinStock = await agregarProximo('AVISO-AL-ACUMULAR', 0);
+  const masTarde = await agregar({
+    nevera_id: 'AVISO-AL-EDITAR',
+    fecha_vencimiento: new Date(Date.now() + 4 * 86_400_000).toISOString()
+  }, auth);
+  assert.equal((await avisos()).length, 1);
+  assert.equal((await agregarProximo(sinStock.nevera_id))._id, sinStock._id);
+  const editar = (item, body) => correcto('/inventario/' + item._id, { ...auth, method: 'PUT', body });
+  await editar(masTarde, { fecha_vencimiento: fecha });
+  const vigentes = await avisos();
+  assert.equal(vigentes.length, 3);
+  assert.ok(vigentes.some(aviso => aviso.inventario_id === sinStock._id));
+  assert.ok(vigentes.some(aviso => aviso.inventario_id === masTarde._id));
+
+  await editar(lote, { estado: 'CONSUMIDO' });
+  assert.deepEqual((await avisos()).filter(aviso => aviso.desactualizada).map(aviso => aviso._id), [primero._id]);
+  await cerrarSesion(auth);
+});
+
+test('El control de versión protege contra ediciones simultáneas y respeta los clientes anteriores', async () => {
+  const creado = await agregar({ nevera_id: 'VERSION' });
+  assert.equal(creado.version, 0);
+  const ruta = '/inventario/' + creado._id;
+  const actualizar = body => api(ruta, { ...usuario, method: 'PUT', body });
+
+  const cambios = await Promise.all([
+    actualizar({ version: 0, cantidad: 3 }),
+    actualizar({ version: 0, cantidad: 5 })
+  ]);
+  assert.deepEqual(cambios.map(cambio => cambio.status).sort(), [200, 409]);
+  const guardado = cambios.find(cambio => cambio.status === 200).data;
+  assert.equal(guardado.version, 1);
+  const conflicto = cambios.find(cambio => cambio.status === 409);
+  assert.deepEqual(conflicto.data, { conflicto: 'VERSION', inventario_id: creado._id });
+  const sinVersion = await actualizar({ estado: 'CONSUMIDO' });
+  assert.equal(sinVersion.status, 200);
+  assert.equal(sinVersion.data.version, 2);
+  assert.equal(sinVersion.data.cantidad, guardado.cantidad);
+  assert.equal((await actualizar({ version: 1, cantidad: 8 })).status, 409);
+  assert.equal((await correcto(ruta, usuario)).estado, 'CONSUMIDO');
+  assert.equal((await actualizar({ version: null, cantidad: 9 })).status, 400);
+});
+
+test('Inventario responde 400 por estados o fechas inválidos y solicitudes incompletas', async () => {
   const creado = await agregar({ cantidad: 0, fecha_vencimiento: '2032-02-29T12:00-05:00' });
   assert.equal(creado.nevera_id, 'NEVERA-01');
   assert.equal(creado.cantidad, 0);
@@ -421,6 +483,10 @@ test('Inventario responde 400 por fechas inválidas y solicitudes incompletas', 
   }
   for (const body of [undefined, {}, [], { user_nombre: idUsuario }]) {
     assert.equal((await api(ruta, { ...put, body })).status, 400);
+  }
+  for (const estado of [null, '', 'incorrecto']) {
+    assert.equal((await api('/inventario', { ...post, body: { ...loteBase, estado } })).status, 400);
+    assert.equal((await api(ruta, { ...put, body: { estado } })).status, 400);
   }
   for (const fecha_vencimiento of ['2032-02-30T12:00:00Z', '2031-02-29T12:00:00Z', '2032-04-31T09:00:00-05:00',
     '2032-05-01T24:00:00Z', '2032-05-01T12:00:00', '2032-05-01T12:00:00-05:75']) {
@@ -843,8 +909,9 @@ test('El frontend pagina, muestra el lote en conflicto y conserva sesión y vist
   const idInventarioWeb = '7007';
   await correcto('/usuarios', { method: 'POST', body: datosCuenta(idInventarioWeb) });
   const sesionInventario = await sesion(idInventarioWeb);
+  let ultimo;
   for (let dia = 1; dia <= 21; dia++) {
-    await agregar({ nevera_id: 'PAGINAS-WEB', fecha_vencimiento: `2032-09-${String(dia).padStart(2, '0')}T12:00:00-05:00` }, sesionInventario);
+    ultimo = await agregar({ nevera_id: 'PAGINAS-WEB', fecha_vencimiento: `2032-09-${String(dia).padStart(2, '0')}T12:00:00-05:00` }, sesionInventario);
   }
   await cerrarSesion(sesionInventario);
   const navegador = await abrirNavegador(t);
@@ -882,6 +949,27 @@ test('El frontend pagina, muestra el lote en conflicto y conserva sesión y vist
   await formulario.getByRole('button', { name: 'Ver lote existente' }).click();
   await pagina.locator('#detail-dialog[open]').waitFor();
   assert.equal(await pagina.locator('#detail-title').textContent(), 'Leche de prueba');
+  await pagina.keyboard.press('Escape');
+  await pagina.locator('#detail-dialog').waitFor({ state: 'hidden' });
+
+  await filas.first().getByRole('button', { name: 'Editar', exact: true }).click();
+  const cantidad = formulario.locator('input[name=cantidad]');
+  await cantidad.waitFor();
+  const cookie = (await pagina.context().cookies()).find(item => item.name === 'nevera_session');
+  assert.ok(cookie);
+  const web = { cookie: `${cookie.name}=${cookie.value}` };
+  const ruta = '/inventario/' + ultimo._id;
+  await correcto(ruta, { ...web, method: 'PUT', body: { cantidad: 9 } });
+  await cantidad.fill('5');
+  const solicitud = pagina.waitForRequest(request => request.method() === 'PUT' && request.url().endsWith('/api' + ruta));
+  await formulario.getByRole('button', { name: 'Guardar', exact: true }).click();
+  assert.deepEqual((await solicitud).postDataJSON(), { cantidad: 5, version: 0 });
+  const recargar = formulario.getByRole('button', { name: 'Recargar lote', exact: true });
+  await recargar.click();
+  await cantidad.waitFor();
+  assert.equal(await cantidad.inputValue(), '9');
+  assert.equal((await correcto(ruta, web)).cantidad, 9);
+  await formulario.getByRole('button', { name: 'Cancelar', exact: true }).click();
 
   const esperarPerfil = Promise.withResolvers();
   await pagina.route('**/api/usuarios/me', async route => {
