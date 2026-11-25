@@ -92,7 +92,7 @@ function escaparHtml(valor) {
   return valor.replace(/[&<>"']/g, caracter => entidades[caracter]);
 }
 
-function htmlRecuperacion(enlace, codigo) {
+function htmlCodigo({ titulo, introduccion, enlace, instruccion, codigo, minutos, vencimiento, aviso }) {
   return `<!doctype html>
 <html lang="es">
 <body style="margin:0;background:#edf5ef;font-family:Arial,sans-serif;color:#19352c">
@@ -103,19 +103,21 @@ function htmlRecuperacion(enlace, codigo) {
           Nevera Inteligente
         </td></tr>
         <tr><td style="padding:28px">
-          <h1 style="margin:0 0 14px;font-size:26px;line-height:1.2">Recupera tu contraseña</h1>
-          <p style="margin:0 0 24px;font-size:16px;line-height:1.55">Solicitaste cambiar la contraseña de tu cuenta. Abre el enlace para elegir una nueva.</p>
+          <h1 style="margin:0 0 14px;font-size:26px;line-height:1.2">${escaparHtml(titulo)}</h1>
+          <p style="margin:0 0 24px;font-size:16px;line-height:1.55">${escaparHtml(introduccion)}</p>
+          ${enlace ? `
           <table role="presentation" cellspacing="0" cellpadding="0">
             <tr><td bgcolor="#125b44" style="border-radius:9px">
               <a href="${escaparHtml(enlace)}" style="display:inline-block;padding:14px 20px;color:#ffffff;text-decoration:none;font-size:16px;font-weight:bold">Restablecer contraseña</a>
             </td></tr>
           </table>
-          <p style="margin:28px 0 12px;font-size:15px;line-height:1.5">También puedes ingresar este código en la página de recuperación.</p>
+          ` : ''}
+          <p style="margin:${enlace ? '28px' : '0'} 0 12px;font-size:15px;line-height:1.5">${escaparHtml(instruccion)}</p>
           <p style="margin:0;padding:14px 6px;text-align:center;border-radius:10px;background:#eaf5ed;color:#125b44;font-family:monospace;font-size:30px;font-weight:bold;letter-spacing:4px">${escaparHtml(codigo)}</p>
-          <p style="margin:18px 0 0;font-size:14px;line-height:1.55">El enlace y el código vencen en <strong>30 minutos</strong>. Puedes completar el cambio una sola vez.</p>
+          <p style="margin:18px 0 0;font-size:14px;line-height:1.55">${escaparHtml(vencimiento)} <strong>${minutos} minutos</strong>. Puedes completar la solicitud una sola vez.</p>
         </td></tr>
         <tr><td style="padding:18px 28px;border-top:1px solid #d5e5da;color:#4e655c;font-size:13px;line-height:1.55">
-          Si no solicitaste este cambio, puedes ignorar este correo.
+          ${escaparHtml(aviso)}
         </td></tr>
       </table>
     </td></tr>
@@ -129,7 +131,14 @@ async function enviarCorreoRecuperacion(configuracion, email, enlace, codigo) {
     from: { name: 'Nevera Inteligente', address: configuracion.remitente },
     to: { address: email, name: '' },
     subject: 'Restablece tu contraseña de Nevera Inteligente',
-    html: htmlRecuperacion(enlace, codigo),
+    html: htmlCodigo({
+      titulo: 'Recupera tu contraseña',
+      introduccion: 'Solicitaste cambiar la contraseña de tu cuenta. Abre el enlace para elegir una nueva.',
+      enlace, codigo, minutos: 30,
+      instruccion: 'También puedes ingresar este código en la página de recuperación.',
+      vencimiento: 'El enlace y el código vencen en',
+      aviso: 'Si no solicitaste este cambio, puedes ignorar este correo.'
+    }),
     text: [
       'Abre el siguiente enlace para elegir una contraseña nueva.',
       enlace,
@@ -171,6 +180,14 @@ function enviarCodigoEliminacion(configuracion, email, codigo) {
     from: { name: 'Nevera Inteligente', address: configuracion.remitente },
     to: { address: email, name: '' },
     subject: 'Confirma la eliminación de tu cuenta de Nevera Inteligente',
+    html: htmlCodigo({
+      titulo: 'Confirma la eliminación de tu cuenta',
+      introduccion: 'Recibimos una solicitud para eliminar tu cuenta de Nevera Inteligente.',
+      codigo, minutos: 5,
+      instruccion: 'Ingresa este código en Mi cuenta → Eliminar mi cuenta para confirmar tu identidad.',
+      vencimiento: 'El código vence en',
+      aviso: 'Si no solicitaste eliminar tu cuenta, ignora este correo y mantén el código en privado.'
+    }),
     text: [
       'Usa este código para confirmar la eliminación permanente de tu cuenta.',
       codigo,

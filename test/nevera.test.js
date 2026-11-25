@@ -1249,6 +1249,11 @@ test('Mi cuenta requiere el nombre exacto y respeta el bloqueo por dependencias 
   const mime = Buffer.from(correo, 'base64url').toString('utf8');
   const codigo = /^([0-9]{6})\r?$/m.exec(mime);
   assert.ok(codigo);
+  const html = mime.replace(/=\r?\n/g, '').replace(/=3D/g, '=');
+  assert.match(html, /Content-Type: multipart\/alternative/i);
+  assert.match(html, /Content-Type: text\/html/i);
+  assert.ok(html.includes('>' + codigo[1] + '</p>'));
+  assert.match(html, /<strong>5 minutos<\/strong>/);
   await dialogo.locator('#delete-code').fill(codigo[1]);
   await dialogo.getByRole('checkbox').check();
   await eliminar.click();
