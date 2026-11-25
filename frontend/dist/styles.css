@@ -935,6 +935,21 @@ dialog::backdrop { background: #0d271f9e; backdrop-filter: blur(5px); }
 
 #delete-expected-name { white-space: pre-wrap; }
 
+#delete-proof {
+  display: grid;
+  gap: .75rem;
+  margin-bottom: 1rem;
+  text-align: left;
+}
+
+#delete-code-field {
+  display: grid;
+  gap: .55rem;
+}
+
+#delete-code-status { margin: 0; }
+#delete-code-status:empty { display: none; }
+
 .confirmation-dialog .dialog-actions { justify-content: center; }
 
 .update-check {

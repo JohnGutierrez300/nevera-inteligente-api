@@ -714,7 +714,10 @@ test('Se aplican permisos, llaves foráneas y conservación de historial al borr
   });
   const opcionBorrar = { ...propietario, method: 'DELETE' };
   const ruta = '/usuarios/' + idBorrado;
-  const bloqueo = await api(ruta, opcionBorrar);
+  const eliminarCuenta = { ...opcionBorrar, body: { nombre: datosCuenta(idBorrado).nombre, acepta_borrado: true, password_actual: clave } };
+  assert.equal((await api(ruta, opcionBorrar)).status, 400);
+  assert.equal((await api(ruta, { ...eliminarCuenta, body: { ...eliminarCuenta.body, password_actual: otraClave } })).status, 403);
+  const bloqueo = await api(ruta, eliminarCuenta);
   assert.equal(bloqueo.status, 409);
   assert.deepEqual(bloqueo.data.dependencias.map(dependencia => dependencia.coleccion).sort(),
     ['inventario', 'notificaciones', 'patrones_predictivos']);
@@ -723,7 +726,7 @@ test('Se aplican permisos, llaves foráneas y conservación de historial al borr
   await correcto('/meal_preps/' + plan._id, opcionBorrar);
   await correcto('/patrones_predictivos/' + plan.patron_predictivo_id, opcionBorrar);
   await correcto('/inventario/' + lote._id, opcionBorrar);
-  await correcto(ruta, opcionBorrar);
+  await correcto(ruta, eliminarCuenta);
   assert.equal((await api('/usuarios/me', propietario)).status, 401);
   const repetido = await api('/usuarios', { method: 'POST', body: datosCuenta(idBorrado) });
   assert.equal(repetido.success, false);
@@ -1197,13 +1200,15 @@ test('Mi cuenta requiere el nombre exacto y respeta el bloqueo por dependencias 
   const irACuenta = () => pagina.getByRole('button', { name: 'Mi cuenta', exact: true }).click();
   const abrirConfirmacion = () => pagina.getByRole('button', { name: 'Eliminar mi cuenta', exact: true }).click();
   const dialogo = pagina.getByRole('dialog', { name: '¿Eliminar tu cuenta?' });
-  const nombre = dialogo.getByRole('textbox');
+  const nombre = dialogo.locator('#delete-name');
   const eliminar = dialogo.getByRole('button', { name: 'Eliminar cuenta', exact: true });
 
   await entrar(pagina, idCuentaWeb);
   await irACuenta();
   await abrirConfirmacion();
   await nombre.fill(datosCuenta(idCuentaWeb).nombre);
+  await dialogo.locator('#delete-password').fill(clave);
+  await dialogo.getByRole('checkbox').check();
   await eliminar.click();
   await pagina.getByText(/Registros vinculados.*inventario/).waitFor();
   assert.ok(await pagina.locator('#dashboard').isVisible());
@@ -1225,6 +1230,9 @@ test('Mi cuenta requiere el nombre exacto y respeta el bloqueo por dependencias 
   await nombre.fill(nombreExacto.toUpperCase());
   assert.ok(await eliminar.isDisabled());
   await nombre.fill(nombreExacto);
+  assert.ok(await eliminar.isDisabled());
+  await dialogo.locator('#delete-password').fill(clave);
+  await dialogo.getByRole('checkbox').check();
   assert.ok(await eliminar.isEnabled());
   await nombre.press('Enter');
   assert.ok(await dialogo.isVisible());
@@ -1234,6 +1242,15 @@ test('Mi cuenta requiere el nombre exacto y respeta el bloqueo por dependencias 
   assert.equal(await nombre.inputValue(), '');
   assert.ok(await eliminar.isDisabled());
   await nombre.fill(nombreExacto);
+  await dialogo.locator('#delete-method').selectOption('code');
+  await dialogo.getByRole('button', { name: 'Enviar código al correo' }).click();
+  await dialogo.getByText('Enviamos el código al correo registrado.').waitFor();
+  const correo = await esperar(() => correosEnviados.shift(), 'Falta el mensaje de confirmación.');
+  const mime = Buffer.from(correo, 'base64url').toString('utf8');
+  const codigo = /^([0-9]{6})\r?$/m.exec(mime);
+  assert.ok(codigo);
+  await dialogo.locator('#delete-code').fill(codigo[1]);
+  await dialogo.getByRole('checkbox').check();
   await eliminar.click();
   await pagina.locator('#login').waitFor();
   await pagina.getByText('Usuario eliminado exitosamente', { exact: true }).waitFor();

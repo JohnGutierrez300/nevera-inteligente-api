@@ -101,7 +101,8 @@ export function createModel(request) {
       recover: email => request('/usuarios/recuperar-contrasena', 'POST', { email }),
       reset: (verification, password) => request('/usuarios/restablecer-contrasena', 'POST', { ...verification, password }),
       update: (id, fields) => request(byId('/usuarios', id), 'PUT', fields),
-      remove: id => remove('/usuarios', id)
+      requestDeletionCode: id => request(byId('/usuarios', id) + '/codigo-eliminacion', 'POST'),
+      remove: (id, verification) => request(byId('/usuarios', id), 'DELETE', verification)
     },
     inventory: {
       summary: () => read('/inventario/resumen'),

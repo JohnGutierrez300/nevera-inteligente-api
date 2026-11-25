@@ -19,6 +19,13 @@ export function createDialogs() {
   const confirmButton = confirmDialog.querySelector('[value="confirm"]');
   const nameField = byId('delete-name-field');
   const nameInput = byId('delete-name');
+  const proof = byId('delete-proof');
+  const method = byId('delete-method');
+  const currentPassword = byId('delete-password');
+  const code = byId('delete-code');
+  const accept = byId('delete-accept');
+  const sendCode = byId('delete-send-code');
+  const codeStatus = byId('delete-code-status');
   const update = byId('update-dialog');
   const details = byId('detail-dialog');
   const editor = byId('editor-dialog');
@@ -28,6 +35,8 @@ export function createDialogs() {
   const formError = byId('editor-error');
   let pendingConfirmation = null;
   let requiredName = null;
+  let requestCode = null;
+  let confirmationGeneration = 0;
   let feedbackTimer;
 
   function closeFeedback() {
@@ -41,7 +50,8 @@ export function createDialogs() {
   }
 
   function confirmationMatches() {
-    return requiredName === null || nameInput.value === requiredName;
+    return requiredName === null || (nameInput.value === requiredName && accept.checked &&
+      (method.value === 'password' ? Boolean(currentPassword.value) : /^[0-9]{6}$/.test(code.value)));
   }
 
   function updateConfirmButton() {
@@ -49,15 +59,47 @@ export function createDialogs() {
   }
 
   nameInput.addEventListener('input', updateConfirmButton);
+  for (const field of [currentPassword, code, accept]) field.addEventListener('input', updateConfirmButton);
+  function showMethod() {
+    const byCode = method.value === 'code';
+    byId('delete-password-field').hidden = byCode;
+    byId('delete-code-field').hidden = !byCode;
+    updateConfirmButton();
+  }
+  method.addEventListener('change', showMethod);
+  sendCode.addEventListener('click', async () => {
+    if (!requestCode) return;
+    const generation = confirmationGeneration;
+    sendCode.disabled = true;
+    codeStatus.textContent = 'Enviando código…';
+    try {
+      const response = await requestCode();
+      if (generation === confirmationGeneration && confirmDialog.open) codeStatus.textContent = response.message;
+    } catch (error) {
+      if (generation === confirmationGeneration && confirmDialog.open) codeStatus.textContent = errorMessage(error);
+    } finally {
+      if (generation === confirmationGeneration) sendCode.disabled = false;
+    }
+  });
+  confirmDialog.addEventListener('close', () => {
+    if (confirmDialog.open) return;
+    currentPassword.value = code.value = '';
+    accept.checked = false;
+    requestCode = null;
+  });
   confirmDialog.addEventListener('cancel', () => { pendingConfirmation = null; });
   confirmDialog.querySelector('form').addEventListener('submit', event => {
     event.preventDefault();
     const confirming = event.submitter === confirmButton;
     if (confirming && !confirmationMatches()) return;
     const confirm = pendingConfirmation;
+    const verification = requiredName === null ? undefined : {
+      nombre: nameInput.value, acepta_borrado: accept.checked,
+      ...(method.value === 'password' ? { password_actual: currentPassword.value } : { codigo: code.value })
+    };
     pendingConfirmation = null;
     confirmDialog.close();
-    if (confirming && confirm) void confirm();
+    if (confirming && confirm) void confirm(verification);
   });
   details.addEventListener('cancel', event => {
     if (details.querySelector('.detail-actions button:disabled')) event.preventDefault();
@@ -73,7 +115,7 @@ export function createDialogs() {
   });
 
   return {
-    confirm(title, message, label, onConfirm, { accountName = null } = {}) {
+    confirm(title, message, label, onConfirm, { accountName = null, onRequestCode = null } = {}) {
       if (confirmDialog.open) return;
       byId('delete-title').textContent = title;
       byId('delete-description').replaceChildren(message);
@@ -82,7 +124,14 @@ export function createDialogs() {
       nameField.hidden = requiredName === null;
       byId('delete-expected-name').textContent = requiredName ?? '';
       nameInput.value = '';
-      updateConfirmButton();
+      confirmationGeneration++;
+      proof.hidden = requiredName === null;
+      method.value = 'password';
+      currentPassword.value = code.value = codeStatus.textContent = '';
+      accept.checked = false;
+      sendCode.disabled = false;
+      requestCode = onRequestCode;
+      showMethod();
       pendingConfirmation = onConfirm;
       confirmDialog.showModal();
     },

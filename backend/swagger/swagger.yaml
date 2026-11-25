@@ -396,7 +396,28 @@ paths:
       operationId: deleteUser
       summary: Eliminar un usuario (Bloqueado si tiene inventario, patrones predictivos o notificaciones)
       description: Cuando la cuenta se puede eliminar, se cierran sus sesiones, su ID queda reservado y se conserva el historial de inventario.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nombre, acepta_borrado]
+              oneOf:
+                - required: [password_actual]
+                - required: [codigo]
+              properties:
+                nombre: { type: string }
+                acepta_borrado: { type: boolean, enum: [true] }
+                password_actual: { type: string, format: password, maxLength: 1024 }
+                codigo: { type: string, pattern: '^[0-9]{6}$', example: '012345' }
       responses:
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "429":
+          description: Límite temporal de verificación alcanzado.
+        "503":
+          description: Confirmación por correo sin configurar.
         "200":
           $ref: '#/components/responses/OkWithLookup'
         "409":
@@ -411,6 +432,33 @@ paths:
   # ==========================================
   # 2. MÓDULO DE CATEGORÍAS
   # ==========================================
+  /api/usuarios/{id}/codigo-eliminacion:
+    post:
+      security:
+        - bearerAuth: []
+      tags: [Usuarios]
+      operationId: requestAccountDeletionCode
+      summary: Enviar el código para eliminar la cuenta del usuario autenticado
+      description: El código se envía al correo registrado y vence en cinco minutos. Está vinculado a la sesión vigente.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: Código enviado.
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          description: La cuenta cambió durante el envío.
+        "429":
+          description: Espera un minuto antes de solicitar otro código.
+        "503":
+          description: Correo no disponible.
+
   /api/categorias:
     post:
       security:

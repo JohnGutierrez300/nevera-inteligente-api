@@ -228,6 +228,25 @@
       <span>Para confirmar, escribe <strong id="delete-expected-name" dir="auto"></strong>.</span>
       <input id="delete-name" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
     </label>
+    <div id="delete-proof" hidden>
+      <label>Método de confirmación
+        <select id="delete-method"><option value="password">Contraseña actual</option><option value="code">Código por correo</option></select>
+      </label>
+      <label id="delete-password-field">Contraseña actual
+        <input id="delete-password" type="password" autocomplete="current-password" maxlength="1024">
+      </label>
+      <div id="delete-code-field" hidden>
+        <button id="delete-send-code" class="secondary" type="button">Enviar código al correo</button>
+        <label>Código de 6 dígitos
+          <input id="delete-code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+        </label>
+        <p id="delete-code-status" role="status"></p>
+      </div>
+      <label class="check-field">
+        <input id="delete-accept" type="checkbox">
+        Entiendo que eliminar mi cuenta es permanente y perderé el acceso a ella.
+      </label>
+    </div>
     <form method="dialog" class="dialog-actions">
       <button class="secondary" value="cancel" autofocus>Cancelar</button>
       <button class="primary delete-confirm" value="confirm">Eliminar lote</button>

@@ -166,4 +166,17 @@ async function enviarMensaje(configuracion, mensaje) {
   }
 }
 
-module.exports = { configurarCorreo, enviarCorreoRecuperacion, solicitarTokenGmail };
+function enviarCodigoEliminacion(configuracion, email, codigo) {
+  return enviarMensaje(configuracion, {
+    from: { name: 'Nevera Inteligente', address: configuracion.remitente },
+    to: { address: email, name: '' },
+    subject: 'Confirma la eliminación de tu cuenta de Nevera Inteligente',
+    text: [
+      'Usa este código para confirmar la eliminación permanente de tu cuenta.',
+      codigo,
+      'El código vence en 5 minutos. Si no solicitaste eliminar tu cuenta, ignora este correo.'
+    ].join('\n\n')
+  });
+}
+
+module.exports = { configurarCorreo, enviarCorreoRecuperacion, enviarCodigoEliminacion, solicitarTokenGmail };

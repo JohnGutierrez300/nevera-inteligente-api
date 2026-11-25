@@ -7,7 +7,7 @@ const YAML = require('yamljs');
 const { createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { huella, protegerClave, verificarClave } = require('./credenciales');
-const { configurarCorreo, enviarCorreoRecuperacion } = require('./correo-recuperacion');
+const { configurarCorreo, enviarCorreoRecuperacion, enviarCodigoEliminacion } = require('./correo-recuperacion');
 
 const raizProyecto = path.resolve(__dirname, '..');
 require('dotenv').config({ path: path.join(raizProyecto, '.env') });
@@ -212,6 +212,9 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   recuperacion_vence: { type: Date, select: false },
   recuperacion_solicitada: { type: Date, select: false },
   recuperacion_pendiente: { type: String, select: false },
+  eliminacion_codigo: { type: mongoose.Schema.Types.Mixed, select: false },
+  eliminacion_intentos: { type: Number, select: false },
+  eliminacion_intentos_vence: { type: Date, select: false },
   revision_notificaciones: { type: Number, select: false }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
 
@@ -720,7 +723,7 @@ const RECUPERACION_ESPERA_MS = 2 * 60 * 1000;
 const LIMITE_INTENTOS_CODIGO = 5;
 const CAMPOS_RECUPERACION = {
   recuperacion_hash: 1, recuperacion_vence: 1, recuperacion_codigo_hash: 1,
-  recuperacion_codigo_intentos: 1, recuperacion_pendiente: 1
+  recuperacion_codigo_intentos: 1, recuperacion_pendiente: 1, eliminacion_codigo: 1
 };
 const correoValido = email => typeof email === 'string' && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -1051,14 +1054,96 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
   }
 });
 
-// Eliminación restringida: bloqueada (409) si el usuario tiene inventario, patrones o notificaciones
-mutacion('delete', '/api/usuarios/:id', async req => {
+function filtroCuentaParaEliminar(req) {
+  const { _id, email, password_hash, nombre } = req.usuario;
+  return { _id, email, password_hash, nombre };
+}
+
+function hashCodigoEliminacion(configuracion, sesion, nonce, codigo) {
+  return createHmac('sha256', configuracion.oauth?.refresh_token ?? configuracion.clave)
+    .update(`nevera-eliminacion:${sesion}:${nonce}:${codigo}`).digest('hex');
+}
+
+app.post('/api/usuarios/:id/codigo-eliminacion', async (req, res) => {
   exigirPropietario(req.usuarioId, req.params.id);
-  const usuarioEliminado = await eliminarPorId(Usuario, req.params.id);
-  await IdUsuarioRetirado.updateOne({ _id: usuarioEliminado._id }, { $setOnInsert: { _id: usuarioEliminado._id } }, { upsert: true });
-  await Sesion.deleteMany({ usuario: req.usuarioId });
-  await IntentoIngreso.deleteOne({ _id: llaveIngreso(req.usuario) });
-  return responseFormat(true, 'Usuario eliminado exitosamente', usuarioEliminado);
+  const configuracion = configurarCorreo();
+  if (!configuracion) throw new ApiError(503, 'El envío de códigos todavía no está disponible.');
+  const ahora = Date.now();
+  const nonce = randomUUID();
+  const codigo = String(randomInt(1_000_000)).padStart(6, '0');
+  const sesion = req.sesion._id;
+  const filtro = filtroCuentaParaEliminar(req);
+  const cambio = await Usuario.updateOne({
+    ...filtro, 'eliminacion_codigo.enviar_despues': { $not: { $gt: new Date(ahora) } }
+  }, { $set: { eliminacion_codigo: {
+    nonce, sesion, hash: hashCodigoEliminacion(configuracion, sesion, nonce, codigo),
+    vence: new Date(ahora + 300_000), enviar_despues: new Date(ahora + 60_000),
+    intentos: 0, enviado: false
+  } } });
+  if (!cambio.matchedCount) throw new ApiError(429, 'Espera un minuto antes de solicitar otro código.');
+  const reserva = { ...filtro, 'eliminacion_codigo.nonce': nonce };
+  try {
+    await enviarCodigoEliminacion(configuracion, req.usuario.email, codigo);
+  } catch {
+    await Usuario.updateOne(reserva, { $unset: { eliminacion_codigo: 1 } });
+    throw new ApiError(503, 'No se pudo enviar el código. Inténtalo de nuevo.');
+  }
+  const activado = await Usuario.updateOne(reserva, { $set: { 'eliminacion_codigo.enviado': true } });
+  if (!activado.matchedCount) throw new ApiError(409, 'La cuenta cambió. Solicita otro código.');
+  res.status(202).json(responseFormat(true, 'Enviamos el código al correo registrado.'));
+});
+
+app.delete('/api/usuarios/:id', async (req, res) => {
+  exigirPropietario(req.usuarioId, req.params.id);
+  const { nombre, acepta_borrado, password_actual, codigo } = req.body ?? {};
+  if (acepta_borrado !== true || nombre !== req.usuario.nombre.replace(/\r\n?|\n/g, ' ')) {
+    throw new ApiError(400, 'Escribe el nombre de la cuenta y acepta el borrado permanente.');
+  }
+  if ((password_actual === undefined) === (codigo === undefined)) {
+    throw new ApiError(400, 'Confirma con tu contraseña actual o con el código de correo.');
+  }
+  const filtro = filtroCuentaParaEliminar(req);
+  if (codigo !== undefined) {
+    if (typeof codigo !== 'string' || !/^[0-9]{6}$/.test(codigo)) throw new ApiError(400, 'Ingresa un código de seis dígitos.');
+    const configuracion = configurarCorreo();
+    if (!configuracion) throw new ApiError(503, 'La confirmación por correo no está disponible.');
+    const intento = await Usuario.findOneAndUpdate({
+      ...filtro, 'eliminacion_codigo.sesion': req.sesion._id, 'eliminacion_codigo.enviado': true,
+      'eliminacion_codigo.vence': { $gt: new Date() }, 'eliminacion_codigo.intentos': { $lt: 5 }
+    }, { $inc: { 'eliminacion_codigo.intentos': 1 } }).select('+eliminacion_codigo').lean();
+    const reto = intento?.eliminacion_codigo;
+    if (!reto || !timingSafeEqual(Buffer.from(reto.hash, 'hex'),
+      Buffer.from(hashCodigoEliminacion(configuracion, req.sesion._id, reto.nonce, codigo), 'hex'))) {
+      throw new ApiError(403, 'El código es incorrecto, venció o agotó sus intentos.');
+    }
+    filtro['eliminacion_codigo.nonce'] = reto.nonce;
+    filtro['eliminacion_codigo.vence'] = { $gt: new Date() };
+  } else {
+    if (typeof password_actual !== 'string' || !password_actual || password_actual.length > 1024) {
+      throw new ApiError(400, 'Ingresa tu contraseña actual.');
+    }
+    const ahora = new Date();
+    const nueva = { $lte: [{ $ifNull: ['$eliminacion_intentos_vence', new Date(0)] }, ahora] };
+    const intento = await Usuario.findOneAndUpdate(filtro, [{ $set: {
+      eliminacion_intentos: { $cond: [nueva, 1, { $min: [6, { $add: ['$eliminacion_intentos', 1] }] }] },
+      eliminacion_intentos_vence: { $cond: [nueva, new Date(ahora.getTime() + 300_000), '$eliminacion_intentos_vence'] }
+    } }], { updatePipeline: true, returnDocument: 'after' }).select('+eliminacion_intentos').lean();
+    if (!intento || intento.eliminacion_intentos > 5) throw new ApiError(429, 'Espera a que termine el límite de cinco minutos o usa el correo.');
+    if (!(await verificarClave(password_actual, req.usuario.password_hash)).valida) {
+      throw new ApiError(403, 'La contraseña actual es incorrecta.');
+    }
+    await Usuario.updateOne(filtro, { $unset: { eliminacion_intentos: 1, eliminacion_intentos_vence: 1 } });
+  }
+  const respuesta = await enTransaccion(async () => {
+    if (!await Sesion.exists({ _id: req.sesion._id, ...filtroSesionVigente(new Date()) })) rechazarSesion(req, res);
+    const usuarioEliminado = await eliminarPorId(Usuario, req.params.id, filtro);
+    await IdUsuarioRetirado.updateOne({ _id: usuarioEliminado._id }, { $setOnInsert: { _id: usuarioEliminado._id } }, { upsert: true });
+    await Sesion.deleteMany({ usuario: req.usuarioId });
+    await IntentoIngreso.deleteOne({ _id: llaveIngreso(req.usuario) });
+    return responseFormat(true, 'Usuario eliminado exitosamente', usuarioEliminado);
+  });
+  if (req.sesionWeb) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
+  res.status(200).json(respuesta);
 });
 
 // 2. Categorías

@@ -231,14 +231,14 @@ export function createDashboardController({
       }),
       onDelete: () => dialogs.confirm('¿Eliminar tu cuenta?',
         'La API comprobará si tienes registros vinculados. Cuando se elimine la cuenta, se cerrarán sus sesiones y se conservará el historial. Esta acción no se puede deshacer.',
-        'Eliminar cuenta', async () => {
+        'Eliminar cuenta', async verification => {
           try {
-            const response = await model.account.remove(account._id);
+            const response = await model.account.remove(account._id, verification);
             if (getProfile() === account) onAccountDeleted(response.message);
           } catch (error) {
             if (getProfile() === account) notice(error);
           }
-        }, { accountName: account.nombre })
+        }, { accountName: account.nombre, onRequestCode: () => model.account.requestDeletionCode(account._id) })
     });
   }
 
