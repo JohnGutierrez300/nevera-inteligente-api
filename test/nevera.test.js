@@ -1254,7 +1254,12 @@ test('Mi cuenta requiere el nombre exacto y respeta el bloqueo por dependencias 
   assert.match(html, /Content-Type: text\/html/i);
   assert.ok(html.includes('>' + codigo[1] + '</p>'));
   assert.match(html, /<strong>5 minutos<\/strong>/);
-  await dialogo.locator('#delete-code').fill(codigo[1]);
+  await dialogo.locator('#delete-code').evaluate((input, valor) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', valor.slice(0, 3) + ' ' + valor.slice(3));
+    input.dispatchEvent(new ClipboardEvent('paste', { clipboardData, cancelable: true }));
+  }, codigo[1]);
+  assert.deepEqual(await dialogo.locator('.recovery-code-digits > span').allTextContents(), [...codigo[1]]);
   await dialogo.getByRole('checkbox').check();
   await eliminar.click();
   await pagina.locator('#login').waitFor();

@@ -1,5 +1,5 @@
 import { passwordLengthLimit, passwordRequirements } from '../modelos/credenciales.js';
-import { bindPasswords, byId, field, formValues, maskPasswords, notice } from './componentes.js';
+import { bindCodeInput, bindPasswords, byId, field, formValues, maskPasswords, notice } from './componentes.js';
 
 function bindSubmit(form, buttons, send, { validate, blocked, done } = {}) {
   const submit = form.querySelector('button[type="submit"], button:not([type])');
@@ -33,50 +33,6 @@ function bindSubmit(form, buttons, send, { validate, blocked, done } = {}) {
   return update;
 }
 
-function bindRecoveryCode(input) {
-  const cells = [...input.nextElementSibling.children];
-
-  function render() {
-    const start = Math.min(input.selectionStart, cells.length - 1);
-    const end = Math.max(input.selectionEnd, start + 1);
-    for (const [index, cell] of cells.entries()) {
-      cell.textContent = input.value[index] ?? '';
-      cell.toggleAttribute('data-current', index >= start && index < end);
-    }
-  }
-
-  function keepDigits() {
-    const digits = input.value.replace(/[^0-9]/g, '');
-    if (digits !== input.value) {
-      const position = input.value.slice(0, input.selectionStart).replace(/[^0-9]/g, '').length;
-      input.value = digits;
-      input.setSelectionRange(position, position);
-    }
-    render();
-  }
-
-  input.addEventListener('input', keepDigits);
-  input.addEventListener('change', keepDigits);
-  for (const event of ['focus', 'keyup', 'select']) input.addEventListener(event, render);
-  input.addEventListener('click', event => {
-    if (event.detail === 1) {
-      const cell = cells.findIndex(cell => event.clientX <= cell.getBoundingClientRect().right);
-      const position = Math.min(cell < 0 ? cells.length - 1 : cell, input.value.length);
-      input.setSelectionRange(position, Math.min(position + 1, input.value.length));
-    }
-    render();
-  });
-  input.addEventListener('paste', event => {
-    const digits = event.clipboardData?.getData('text').replace(/[^0-9]/g, '');
-    if (digits?.length !== input.maxLength) return;
-    event.preventDefault();
-    input.value = digits;
-    input.setSelectionRange(digits.length, digits.length);
-    render();
-  });
-  input.form.addEventListener('reset', () => queueMicrotask(render));
-  render();
-}
 
 function createPasswordChecklist(container, password, confirmation) {
   container.append(byId('password-requirements-template').content.cloneNode(true));
@@ -226,7 +182,7 @@ export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry 
 
   bindPasswords(auth);
   bindPasswords(resetForm);
-  bindRecoveryCode(resetCode);
+  bindCodeInput(resetCode);
   const updateAuthSubmit = bindSubmit(auth, [submit, toggle, forgotToggle], fields => onAuth(fields, registering), {
     validate: () => !registering || registerChecklist.update(),
     blocked: updateLoginLock,

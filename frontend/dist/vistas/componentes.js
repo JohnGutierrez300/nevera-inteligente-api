@@ -89,3 +89,49 @@ export function bindPasswords(form) {
   form.addEventListener('submit', () => maskPasswords(form), true);
   form.addEventListener('reset', () => maskPasswords(form));
 }
+
+export function bindCodeInput(input) {
+  const cells = [...input.nextElementSibling.children];
+
+  function render() {
+    const start = Math.min(input.selectionStart, cells.length - 1);
+    const end = Math.max(input.selectionEnd, start + 1);
+    for (const [index, cell] of cells.entries()) {
+      cell.textContent = input.value[index] ?? '';
+      cell.toggleAttribute('data-current', index >= start && index < end);
+    }
+  }
+
+  function keepDigits() {
+    const digits = input.value.replace(/[^0-9]/g, '');
+    if (digits !== input.value) {
+      const position = input.value.slice(0, input.selectionStart).replace(/[^0-9]/g, '').length;
+      input.value = digits;
+      input.setSelectionRange(position, position);
+    }
+    render();
+  }
+
+  input.addEventListener('input', keepDigits);
+  input.addEventListener('change', keepDigits);
+  for (const event of ['focus', 'keyup', 'select']) input.addEventListener(event, render);
+  input.addEventListener('click', event => {
+    if (event.detail === 1) {
+      const cell = cells.findIndex(cell => event.clientX <= cell.getBoundingClientRect().right);
+      const position = Math.min(cell < 0 ? cells.length - 1 : cell, input.value.length);
+      input.setSelectionRange(position, Math.min(position + 1, input.value.length));
+    }
+    render();
+  });
+  input.addEventListener('paste', event => {
+    const digits = event.clipboardData?.getData('text').replace(/[^0-9]/g, '');
+    if (digits?.length !== input.maxLength) return;
+    event.preventDefault();
+    input.value = digits;
+    input.setSelectionRange(digits.length, digits.length);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  input.form?.addEventListener('reset', () => queueMicrotask(render));
+  render();
+  return render;
+}

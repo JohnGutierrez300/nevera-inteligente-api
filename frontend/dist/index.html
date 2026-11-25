@@ -238,7 +238,12 @@
       <div id="delete-code-field" hidden>
         <button id="delete-send-code" class="secondary" type="button">Enviar código al correo</button>
         <label>Código de 6 dígitos
-          <input id="delete-code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+          <span class="recovery-code">
+            <input id="delete-code" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+            <span class="recovery-code-digits" aria-hidden="true">
+              <span></span><span></span><span></span><span></span><span></span><span></span>
+            </span>
+          </span>
         </label>
         <p id="delete-code-status" role="status"></p>
       </div>

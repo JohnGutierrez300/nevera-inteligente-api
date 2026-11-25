@@ -1,4 +1,4 @@
-import { action, bindPasswords, byId, detailList, errorMessage, formValues, group, maskPasswords } from './componentes.js';
+import { action, bindCodeInput, bindPasswords, byId, detailList, errorMessage, formValues, group, maskPasswords } from './componentes.js';
 
 export function showLotError(target, error, onConflict, onReload = onConflict) {
   target.hidden = !error;
@@ -23,6 +23,7 @@ export function createDialogs() {
   const method = byId('delete-method');
   const currentPassword = byId('delete-password');
   const code = byId('delete-code');
+  const renderCode = bindCodeInput(code);
   const accept = byId('delete-accept');
   const sendCode = byId('delete-send-code');
   const codeStatus = byId('delete-code-status');
@@ -84,6 +85,7 @@ export function createDialogs() {
   confirmDialog.addEventListener('close', () => {
     if (confirmDialog.open) return;
     currentPassword.value = code.value = '';
+    renderCode();
     accept.checked = false;
     requestCode = null;
   });
@@ -128,6 +130,7 @@ export function createDialogs() {
       proof.hidden = requiredName === null;
       method.value = 'password';
       currentPassword.value = code.value = codeStatus.textContent = '';
+      renderCode();
       accept.checked = false;
       sendCode.disabled = false;
       requestCode = onRequestCode;
