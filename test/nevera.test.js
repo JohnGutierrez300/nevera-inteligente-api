@@ -110,6 +110,10 @@ async function leerCorreoRecuperacion(email, esperarActivacion = true) {
   const codigo = /^([0-9]{6})\r?$/m.exec(mime);
   assert.ok(enlace && codigo, 'El correo debe incluir un enlace de recuperación y un código de seis dígitos.');
   const token = enlace[1];
+  assert.match(mime, /Content-Type: multipart\/alternative/i);
+  assert.match(mime, /Content-Type: text\/html/i);
+  assert.ok(mime.includes('href="' + enlace[0] + '"'));
+  assert.ok(mime.includes('>' + codigo[1] + '</p>'));
   if (esperarActivacion) {
     const cliente = await new MongoClient(mongoUri).connect();
     try {
