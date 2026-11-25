@@ -361,7 +361,7 @@ paths:
       tags: [Usuarios]
       operationId: updateUser
       summary: Actualizar un usuario (Nombre, correo o contraseña con validación de seguridad)
-      description: Confirma la contraseña actual al cambiar el correo o la contraseña, tanto con token Bearer como con la sesión web.
+      description: Confirma la contraseña actual al cambiar el correo o la contraseña, tanto con token Bearer como con la sesión web. Tras cambiar el usuario, espera 30 días para volver a cambiarlo. La respuesta indica la fecha en data.nombre_editable_desde.
       requestBody:
         required: true
         content:
@@ -383,6 +383,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "409":
+          description: El usuario está bloqueado temporalmente. data.nombre_editable_desde indica cuándo se puede volver a cambiar.
         "423":
           description: Si la cuenta agotó sus intentos de inicio de sesión, el cambio de contraseña requiere la recuperación por correo.
           content:

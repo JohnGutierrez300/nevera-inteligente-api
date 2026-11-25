@@ -667,14 +667,28 @@ test('Cambiar correo o contraseña requiere la contraseña actual con Bearer y c
   assert.equal((await api(ruta, {
     ...bearer, method: 'PUT', body: { email, password_actual: 'NoEsLaCorrecta!' }
   })).status, 403);
-  const perfil = await correcto(ruta, {
-    ...bearer, method: 'PUT', body: { nombre: 'Perfil editado', email: datosCuenta(idCuenta).email }
-  });
-  assert.equal(perfil.nombre, 'Perfil editado');
+  const cambiarUsuario = nombre => api(ruta, { ...bearer, method: 'PUT', body: { nombre } });
+  const cambios = await Promise.all([cambiarUsuario('Perfil editado'), cambiarUsuario('Perfil alternativo')]);
+  assert.deepEqual(cambios.map(cambio => cambio.status).sort(), [200, 409]);
+  const perfil = cambios.find(cambio => cambio.status === 200).data;
+  const plazo = Date.parse(perfil.nombre_editable_desde) - Date.now();
+  assert.ok(plazo > 30 * 86_400_000 - 5000 && plazo <= 30 * 86_400_000);
+  assert.equal((await cambiarUsuario(' ' + perfil.nombre + ' ')).data.nombre_editable_desde, perfil.nombre_editable_desde);
+  assert.equal((await cambiarUsuario('Cambio prematuro')).status, 409);
   const actualizado = await correcto(ruta, {
     ...bearer, method: 'PUT', body: { email, password_actual: clave }
   });
   assert.equal(actualizado.email, email);
+  assert.equal(actualizado.nombre_editable_desde, perfil.nombre_editable_desde);
+  const cliente = await new MongoClient(mongoUri).connect();
+  try {
+    await cliente.db().collection('usuarios').updateOne({ _id: idCuenta }, {
+      $set: { nombre_editable_desde: new Date(0) }
+    });
+  } finally {
+    await cliente.close();
+  }
+  assert.equal((await cambiarUsuario('Perfil tras la espera')).status, 200);
   await cerrarSesion(bearer);
   const web = await sesion(idCuenta, true);
   await exigirClaveActual(web);

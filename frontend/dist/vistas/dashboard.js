@@ -310,12 +310,20 @@ function catalog(kind, items, admin, { onSelect, onAdd, onDelete }) {
 }
 
 function profileEditor(account) {
-  const name = labelInput('Usuario', 'nombre', { required: true, value: account.nombre, autocomplete: 'username' });
+  const waiting = Date.parse(account.nombre_editable_desde) > Date.now();
+  const name = labelInput('Usuario', 'nombre', {
+    required: true, value: account.nombre, autocomplete: 'username', disabled: waiting
+  });
+  const hint = element('p', waiting
+    ? 'Puedes volver a cambiar tu usuario el ' + formatDate(account.nombre_editable_desde) + ' (hora de Colombia).'
+    : 'Puedes cambiar tu usuario una vez cada 30 días.', 'muted');
+  hint.id = 'profile-name-cooldown';
+  name.input.setAttribute('aria-describedby', hint.id);
   const email = labelInput('Correo', 'email', { required: true, value: account.email, type: 'email', autocomplete: 'email' });
   const password = labelInput('Contraseña actual (para cambiar el correo)', 'password_actual', {
     type: 'password', autocomplete: 'current-password'
   });
-  return { title: 'Editar perfil', fields: [name.wrapper, email.wrapper, password.wrapper] };
+  return { title: 'Editar perfil', fields: [name.wrapper, hint, email.wrapper, password.wrapper] };
 }
 
 function passwordEditor() {

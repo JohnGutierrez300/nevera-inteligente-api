@@ -215,7 +215,8 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   eliminacion_codigo: { type: mongoose.Schema.Types.Mixed, select: false },
   eliminacion_intentos: { type: Number, select: false },
   eliminacion_intentos_vence: { type: Date, select: false },
-  revision_notificaciones: { type: Number, select: false }
+  revision_notificaciones: { type: Number, select: false },
+  nombre_editable_desde: { type: Date, select: false }
 }, { collection: 'usuarios', _id: false, versionKey: false }));
 
 const IdUsuarioRetirado = mongoose.model('IdUsuarioRetirado', new mongoose.Schema({
@@ -427,7 +428,7 @@ async function autenticar(req, res, next) {
   const ahora = new Date();
   const sesion = await Sesion.findOne({ _id: huella(token), ...filtroSesionVigente(ahora) }).lean();
   const [usuario, activa] = typeof sesion?.credencial === 'string' ? await Promise.all([
-    Usuario.findById(sesion.usuario).select('+password_hash +revision_notificaciones').lean(),
+    Usuario.findById(sesion.usuario).select('+password_hash +revision_notificaciones +nombre_editable_desde').lean(),
     buscarSesionActiva(sesion.usuario, sesion.credencial, ahora)
   ]) : [];
   const credencialValida = typeof usuario?.password_hash === 'string' && huella(usuario.password_hash) === sesion.credencial;
@@ -662,7 +663,7 @@ app.post('/api/usuarios/login', async (req, res) => {
     : typeof nombre === 'string' && nombre.trim() ? { nombre }
     : null;
   const usuario = filtro && typeof clave === 'string' && clave.length <= 1024
-    ? await Usuario.findOne(filtro).select('+password_hash')
+    ? await Usuario.findOne(filtro).select('+password_hash +nombre_editable_desde')
     : null;
   if (typeof usuario?.password_hash !== 'string') throw new ApiError(401, 'Credenciales inválidas');
   const llaveIntento = llaveIngreso(usuario);
@@ -857,7 +858,21 @@ function usuarioPublico(usuario) {
 }
 
 function perfilWeb(usuario) {
-  return { ...usuarioPublico(usuario), catalogo_admin: ADMINISTRADORES_CATALOGO.has(usuario._id) };
+  return { ...perfilEditable(usuario), catalogo_admin: ADMINISTRADORES_CATALOGO.has(usuario._id) };
+}
+
+const ESPERA_CAMBIO_NOMBRE_MS = 30 * 24 * 60 * 60 * 1000;
+
+function perfilEditable(usuario) {
+  return { ...usuarioPublico(usuario), nombre_editable_desde: usuario.nombre_editable_desde ?? null };
+}
+
+function exigirNombreEditable(usuario, ahora) {
+  if (usuario?.nombre_editable_desde > ahora) {
+    throw new ApiError(409, 'Solo puedes cambiar el usuario una vez cada 30 días.', {
+      nombre_editable_desde: usuario.nombre_editable_desde
+    });
+  }
 }
 
 app.get('/api/usuarios/me', (req, res) => {
@@ -1000,7 +1015,11 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
     }
 
     const datosActualizados = {};
-    if (nombre !== undefined) datosActualizados.nombre = nombre.trim();
+    const cambiaNombre = nombre !== undefined && nombre.trim() !== req.usuario.nombre;
+    if (cambiaNombre) {
+      exigirNombreEditable(req.usuario, new Date());
+      datosActualizados.nombre = nombre.trim();
+    }
     if (email !== undefined && email.trim() !== req.usuario.email) datosActualizados.email = email.trim();
     const cambiaCredenciales = datosActualizados.email !== undefined || clave !== undefined;
     if (cambiaCredenciales) {
@@ -1031,15 +1050,28 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
     if (clave !== undefined) datosActualizados.password_hash = await protegerClave(clave);
 
     if (!Object.keys(datosActualizados).length) {
-      return res.status(200).json(responseFormat(true, 'Perfil obtenido', usuarioPublico(req.usuario)));
+      return res.status(200).json(responseFormat(true, 'Perfil obtenido', perfilEditable(req.usuario)));
     }
     const cambios = { $set: datosActualizados };
     if (cambiaCredenciales) cambios.$unset = CAMPOS_RECUPERACION;
     const filtro = { _id: usuarioId };
     if (cambiaCredenciales) filtro.password_hash = req.usuario.password_hash;
     const actualizar = async () => {
-      const usuario = await Usuario.findOneAndUpdate(filtro, cambios, { returnDocument: 'after', runValidators: true });
-      if (!usuario) throw new ApiError(401, 'La sesión cambió. Vuelve a iniciar sesión.');
+      const ahora = new Date();
+      if (cambiaNombre) {
+        filtro.$or = [{ nombre_editable_desde: null }, { nombre_editable_desde: { $lte: ahora } }];
+        datosActualizados.nombre_editable_desde = new Date(ahora.getTime() + ESPERA_CAMBIO_NOMBRE_MS);
+      }
+      const usuario = await Usuario.findOneAndUpdate(filtro, cambios, { returnDocument: 'after', runValidators: true })
+        .select('+nombre_editable_desde');
+      if (!usuario) {
+        if (cambiaNombre) {
+          const vigente = await Usuario.findOne({ _id: usuarioId, password_hash: req.usuario.password_hash })
+            .select('+nombre_editable_desde').lean();
+          exigirNombreEditable(vigente, ahora);
+        }
+        throw new ApiError(401, 'La sesión cambió. Vuelve a iniciar sesión.');
+      }
       return usuario;
     };
     const usuarioActualizado = clave === undefined ? await actualizar() : await mongoose.connection.transaction(async () => {
@@ -1048,7 +1080,7 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
       return actualizar();
     });
     if (req.sesionWeb && clave !== undefined) res.clearCookie(NOMBRE_COOKIE, opcionesCookieSesion(req));
-    res.status(200).json(responseFormat(true, 'Usuario actualizado exitosamente', usuarioPublico(usuarioActualizado)));
+    res.status(200).json(responseFormat(true, 'Usuario actualizado exitosamente', perfilEditable(usuarioActualizado)));
   } catch (error) {
     next(error);
   }
