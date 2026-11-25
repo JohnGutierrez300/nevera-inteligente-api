@@ -117,7 +117,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
         "429":
-          description: La cuenta está en espera o ya hay verificaciones en curso. Retry-After indica el tiempo restante. En la espera de cinco minutos, data.ultimo_intento indica que queda un solo intento.
+          description: La cuenta está en espera, ya hay verificaciones en curso o el servicio alcanzó su límite de solicitudes. Retry-After indica el tiempo restante. En la espera de cinco minutos, data.ultimo_intento indica que queda un solo intento.
           headers:
             Retry-After:
               description: Segundos antes de intentar nuevamente.
@@ -158,6 +158,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "503":
           description: Recuperación por correo sin configurar
+        "429":
+          $ref: '#/components/responses/LimiteSolicitudes'
 
   /api/usuarios/restablecer-contrasena:
     post:
@@ -205,6 +207,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "503":
           description: Recuperación por código sin configurar
+        "429":
+          $ref: '#/components/responses/LimiteSolicitudes'
 
   /api/usuarios:
     post:
@@ -229,6 +233,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponse'
+        "429":
+          $ref: '#/components/responses/LimiteSolicitudes'
         "500":
           $ref: '#/components/responses/InternalError'
     get:
@@ -1546,6 +1552,16 @@ components:
   # Respuestas reutilizables
   # ------------------------------------------
   responses:
+    LimiteSolicitudes:
+      description: El servicio alcanzó su límite de solicitudes.
+      headers:
+        Retry-After:
+          description: Segundos antes de volver a intentar.
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiResponse'
     Ok:
       description: Operación procesada. Revise `success` y `message` para el resultado (las validaciones de negocio responden con `success:false`).
       content:

@@ -13,10 +13,44 @@ const raizProyecto = path.resolve(__dirname, '..');
 require('dotenv').config({ path: path.join(raizProyecto, '.env') });
 
 const app = express();
-app.use(express.json());
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer'
+  });
+  next();
+});
 app.use(cors());
 
-app.use('/app', express.static(path.join(raizProyecto, 'frontend', 'dist')));
+const limitesPublicos = new Map([
+  ['/api/usuarios', { maximo: 60 }],
+  ['/api/usuarios/login', { maximo: 120 }],
+  ['/api/usuarios/recuperar-contrasena', { maximo: 60 }],
+  ['/api/usuarios/restablecer-contrasena', { maximo: 120 }]
+]);
+app.use((req, res, next) => {
+  const limite = req.method === 'POST' && limitesPublicos.get(req.path.toLowerCase().replace(/\/$/, ''));
+  if (!limite) return next();
+  const ahora = Date.now();
+  if (!limite.vence || limite.vence <= ahora) {
+    limite.vence = ahora + 60_000;
+    limite.total = 0;
+  }
+  if (limite.total >= limite.maximo) {
+    res.set({ 'Retry-After': String(Math.ceil((limite.vence - ahora) / 1000)), 'Cache-Control': 'no-store' });
+    return res.status(429).json(responseFormat(false, 'El servicio está recibiendo demasiadas solicitudes. Inténtalo más tarde.'));
+  }
+  limite.total++;
+  next();
+});
+app.use(express.json());
+
+app.use('/app', (req, res, next) => {
+  res.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  next();
+}, express.static(path.join(raizProyecto, 'frontend', 'dist')));
 
 // Redirección automática de la raíz al Swagger
 app.get('/', (req, res) => {

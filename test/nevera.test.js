@@ -270,6 +270,13 @@ test('El servidor publica la aplicación y los archivos de Swagger desde sus car
   const swagger = await fetch(baseUrl + '/api-docs/swagger-ui-init.js');
   assert.equal(swagger.status, 200);
   assert.match(await swagger.text(), /\/api\/notificaciones\/resumen/);
+  const pagina = await fetch(baseUrl + '/app/');
+  assert.match(pagina.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+  assert.equal(pagina.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(pagina.headers.get('x-powered-by'), null);
+  for (const ruta of ['/admin', '/app/admin']) {
+    assert.equal((await fetch(baseUrl + ruta)).status, 404);
+  }
 });
 
 test('El ingreso cuenta los fallos por cuenta y deja un intento tras cinco minutos completos', async t => {
@@ -279,7 +286,11 @@ test('El ingreso cuenta los fallos por cuenta y deja un intento tras cinco minut
 
   const id = '7018';
   const cuenta = datosCuenta(id);
-  await correcto('/usuarios', { method: 'POST', body: cuenta });
+  await correcto('/usuarios', { method: 'POST', body: { ...cuenta, catalogo_admin: true, role: 'admin' } });
+  const sesionNormal = await sesion(id);
+  const perfil = await correcto('/usuarios/me', sesionNormal);
+  assert.equal(perfil.catalogo_admin, false);
+  await cerrarSesion(sesionNormal);
   const entrar = body => api('/usuarios/login', { method: 'POST', body });
   const fallar = intento => {
     const identificador = intento % 2 ? { id } : { nombre: cuenta.nombre };
