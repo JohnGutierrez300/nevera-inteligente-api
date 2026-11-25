@@ -27,6 +27,7 @@ export function createDialogs() {
   const accept = byId('delete-accept');
   const sendCode = byId('delete-send-code');
   const codeStatus = byId('delete-code-status');
+  const deleteError = byId('delete-error');
   const update = byId('update-dialog');
   const details = byId('detail-dialog');
   const editor = byId('editor-dialog');
@@ -38,6 +39,7 @@ export function createDialogs() {
   let requiredName = null;
   let requestCode = null;
   let confirmationGeneration = 0;
+  let deleting = false;
   let feedbackTimer;
 
   function closeFeedback() {
@@ -56,7 +58,7 @@ export function createDialogs() {
   }
 
   function updateConfirmButton() {
-    confirmButton.disabled = !confirmationMatches();
+    confirmButton.disabled = deleting || !confirmationMatches();
   }
 
   nameInput.addEventListener('input', updateConfirmButton);
@@ -89,9 +91,15 @@ export function createDialogs() {
     accept.checked = false;
     requestCode = null;
   });
-  confirmDialog.addEventListener('cancel', () => { pendingConfirmation = null; });
-  confirmDialog.querySelector('form').addEventListener('submit', event => {
+  confirmDialog.addEventListener('cancel', event => {
+    if (deleting) event.preventDefault();
+    else pendingConfirmation = null;
+  });
+  const confirmForm = confirmDialog.querySelector('form');
+  const cancelDelete = confirmForm.querySelector('[value="cancel"]');
+  confirmForm.addEventListener('submit', async event => {
     event.preventDefault();
+    if (deleting) return;
     const confirming = event.submitter === confirmButton;
     if (confirming && !confirmationMatches()) return;
     const confirm = pendingConfirmation;
@@ -99,6 +107,24 @@ export function createDialogs() {
       nombre: nameInput.value, acepta_borrado: accept.checked,
       ...(method.value === 'password' ? { password_actual: currentPassword.value } : { codigo: code.value })
     };
+    if (confirming && verification && confirm) {
+      deleting = cancelDelete.disabled = true;
+      deleteError.hidden = true;
+      updateConfirmButton();
+      try {
+        await confirm(verification);
+        confirmDialog.close();
+      } catch (error) {
+        if (confirmDialog.open) {
+          deleteError.textContent = errorMessage(error);
+          deleteError.hidden = false;
+        }
+      } finally {
+        deleting = cancelDelete.disabled = false;
+        updateConfirmButton();
+      }
+      return;
+    }
     pendingConfirmation = null;
     confirmDialog.close();
     if (confirming && confirm) void confirm(verification);
@@ -126,6 +152,8 @@ export function createDialogs() {
       nameField.hidden = requiredName === null;
       byId('delete-expected-name').textContent = requiredName ?? '';
       nameInput.value = '';
+      deleteError.hidden = true;
+      deleteError.textContent = '';
       confirmationGeneration++;
       proof.hidden = requiredName === null;
       method.value = 'password';

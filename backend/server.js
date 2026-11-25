@@ -213,6 +213,7 @@ const Usuario = mongoose.model('Usuario', new mongoose.Schema({
   recuperacion_solicitada: { type: Date, select: false },
   recuperacion_pendiente: { type: String, select: false },
   eliminacion_codigo: { type: mongoose.Schema.Types.Mixed, select: false },
+  eliminacion_pendiente: { type: mongoose.Schema.Types.Mixed, select: false },
   eliminacion_intentos: { type: Number, select: false },
   eliminacion_intentos_vence: { type: Date, select: false },
   revision_notificaciones: { type: Number, select: false },
@@ -724,7 +725,7 @@ const RECUPERACION_ESPERA_MS = 2 * 60 * 1000;
 const LIMITE_INTENTOS_CODIGO = 5;
 const CAMPOS_RECUPERACION = {
   recuperacion_hash: 1, recuperacion_vence: 1, recuperacion_codigo_hash: 1,
-  recuperacion_codigo_intentos: 1, recuperacion_pendiente: 1, eliminacion_codigo: 1
+  recuperacion_codigo_intentos: 1, recuperacion_pendiente: 1, eliminacion_codigo: 1, eliminacion_pendiente: 1
 };
 const correoValido = email => typeof email === 'string' && email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -870,7 +871,7 @@ function perfilEditable(usuario) {
 function exigirNombreEditable(usuario, ahora) {
   if (usuario?.nombre_editable_desde > ahora) {
     throw new ApiError(409, 'Solo puedes cambiar el usuario una vez cada 30 días.', {
-      nombre_editable_desde: usuario.nombre_editable_desde
+      nombre_editable_desde: usuario.nombre_editable_desde, nombre: usuario.nombre
     });
   }
 }
@@ -1106,21 +1107,27 @@ app.post('/api/usuarios/:id/codigo-eliminacion', async (req, res) => {
   const sesion = req.sesion._id;
   const filtro = filtroCuentaParaEliminar(req);
   const cambio = await Usuario.updateOne({
-    ...filtro, 'eliminacion_codigo.enviar_despues': { $not: { $gt: new Date(ahora) } }
-  }, { $set: { eliminacion_codigo: {
-    nonce, sesion, hash: hashCodigoEliminacion(configuracion, sesion, nonce, codigo),
-    vence: new Date(ahora + 300_000), enviar_despues: new Date(ahora + 60_000),
-    intentos: 0, enviado: false
-  } } });
+    ...filtro,
+    'eliminacion_codigo.enviar_despues': { $not: { $gt: new Date(ahora) } },
+    'eliminacion_pendiente.vence': { $not: { $gt: new Date(ahora) } }
+  }, { $set: { eliminacion_pendiente: { nonce, vence: new Date(ahora + 60_000) } } });
   if (!cambio.matchedCount) throw new ApiError(429, 'Espera un minuto antes de solicitar otro código.');
-  const reserva = { ...filtro, 'eliminacion_codigo.nonce': nonce };
+  const reserva = { ...filtro, 'eliminacion_pendiente.nonce': nonce };
   try {
     await enviarCodigoEliminacion(configuracion, req.usuario.email, codigo);
   } catch {
-    await Usuario.updateOne(reserva, { $unset: { eliminacion_codigo: 1 } });
+    await Usuario.updateOne(reserva, { $unset: { eliminacion_pendiente: 1 } });
     throw new ApiError(503, 'No se pudo enviar el código. Inténtalo de nuevo.');
   }
-  const activado = await Usuario.updateOne(reserva, { $set: { 'eliminacion_codigo.enviado': true } });
+  const enviado = Date.now();
+  const activado = await Usuario.updateOne(reserva, {
+    $set: { eliminacion_codigo: {
+      nonce, sesion, hash: hashCodigoEliminacion(configuracion, sesion, nonce, codigo),
+      vence: new Date(enviado + 300_000), enviar_despues: new Date(enviado + 60_000),
+      intentos: 0, enviado: true
+    } },
+    $unset: { eliminacion_pendiente: 1 }
+  });
   if (!activado.matchedCount) throw new ApiError(409, 'La cuenta cambió. Solicita otro código.');
   res.status(202).json(responseFormat(true, 'Enviamos el código al correo registrado.'));
 });
@@ -1191,8 +1198,8 @@ app.post('/api/categorias', async (req, res, next) => {
 
 app.get('/api/categorias', async (req, res, next) => {
   try {
-    const categorias = await Categoria.find();
-    res.status(200).json(responseFormat(true, 'Lista de categorías obtenida', categorias));
+    const { datos, extras } = await consultarLista(Categoria, req.query, ['_id']);
+    res.json({ ...responseFormat(true, 'Lista de categorías obtenida', datos), ...extras });
   } catch (error) {
     next(error);
   }
@@ -1225,8 +1232,8 @@ app.post('/api/marcas', async (req, res, next) => {
 
 app.get('/api/marcas', async (req, res, next) => {
   try {
-    const marcas = await Marca.find();
-    res.status(200).json(responseFormat(true, 'Lista de marcas obtenida', marcas));
+    const { datos, extras } = await consultarLista(Marca, req.query, ['_id']);
+    res.json({ ...responseFormat(true, 'Lista de marcas obtenida', datos), ...extras });
   } catch (error) {
     next(error);
   }
@@ -1259,8 +1266,8 @@ app.post('/api/unidades_medida', async (req, res, next) => {
 
 app.get('/api/unidades_medida', async (req, res, next) => {
   try {
-    const unidades = await UnidadMedida.find();
-    res.status(200).json(responseFormat(true, 'Lista de unidades de medida obtenida', unidades));
+    const { datos, extras } = await consultarLista(UnidadMedida, req.query, ['_id']);
+    res.json({ ...responseFormat(true, 'Lista de unidades de medida obtenida', datos), ...extras });
   } catch (error) {
     next(error);
   }
@@ -1291,7 +1298,14 @@ mutacion('post', '/api/productos', async req => {
 
 app.get('/api/productos', async (req, res, next) => {
   try {
-    const productos = await Producto.find().lean();
+    const filtro = {};
+    for (const campo of ['marca_nombre', 'categoria_nombre']) {
+      const valor = req.query[campo];
+      if (valor === undefined || valor === '') continue;
+      if (typeof valor !== 'string' || !valor.trim()) throw new ApiError(400, 'El filtro de catálogo no es válido.');
+      filtro[campo] = valor;
+    }
+    const { datos: productos, extras } = await consultarLista(Producto, req.query, ['nombre', '_id'], filtro);
     const [marcas, categorias] = productos.length ? await Promise.all([
       Marca.find({ _id: { $in: [...new Set(productos.map(producto => producto.marca_nombre))] } }).lean(),
       Categoria.find({ _id: { $in: [...new Set(productos.map(producto => producto.categoria_nombre))] } }).lean()
@@ -1303,7 +1317,7 @@ app.get('/api/productos', async (req, res, next) => {
       marca_nombre: marcasPorId.get(producto.marca_nombre) ?? producto.marca_nombre,
       categoria_nombre: categoriasPorId.get(producto.categoria_nombre) ?? producto.categoria_nombre
     }));
-    res.status(200).json(responseFormat(true, 'Lista de productos obtenida', productosCompletos));
+    res.json({ ...responseFormat(true, 'Lista de productos obtenida', productosCompletos), ...extras });
   } catch (error) {
     next(error);
   }
@@ -1388,6 +1402,31 @@ function opcionesPaginacion({ pagina, limite }) {
     throw new ApiError(400, 'La página debe ser positiva y el límite debe estar entre 1 y 100');
   }
   return { pagina: numero, limite: cantidad, salto };
+}
+
+async function consultarLista(Modelo, query, campos, base = {}) {
+  const filtro = { ...base };
+  if (query.busqueda !== undefined) {
+    if (typeof query.busqueda !== 'string' || query.busqueda.length > 100) {
+      throw new ApiError(400, 'Escribe una búsqueda de hasta 100 caracteres.');
+    }
+    const texto = query.busqueda.trim().normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+    if (texto) {
+      const letras = { a: '[aáàäâã]', e: '[eéèëê]', i: '[iíìïî]', o: '[oóòöôõ]', u: '[uúùüû]', n: '[nñ]' };
+      const patron = [...texto].map(letra => letras[letra] ?? letra.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('');
+      const regex = new RegExp(patron, 'i');
+      filtro.$or = campos.map(campo => ({ [campo]: regex }));
+    }
+  }
+  const paginacion = opcionesPaginacion(query);
+  const consulta = Modelo.find(filtro).lean();
+  if (!paginacion) return { datos: await consulta };
+  const { pagina, limite, salto } = paginacion;
+  const encontrados = await consulta.sort({ _id: 1 }).skip(salto).limit(limite + 1);
+  return {
+    datos: encontrados.slice(0, limite),
+    extras: { paginacion: { pagina, limite, hay_siguiente: encontrados.length > limite } }
+  };
 }
 
 function registrarHistorial(item, accion, detalles) {
@@ -1680,8 +1719,8 @@ app.post('/api/ingredientes', async (req, res, next) => {
 
 app.get('/api/ingredientes', async (req, res, next) => {
   try {
-    const ingredientes = await Ingrediente.find();
-    res.status(200).json(responseFormat(true, 'Lista de ingredientes obtenida', ingredientes));
+    const { datos, extras } = await consultarLista(Ingrediente, req.query, ['_id']);
+    res.json({ ...responseFormat(true, 'Lista de ingredientes obtenida', datos), ...extras });
   } catch (error) {
     next(error);
   }
@@ -1744,8 +1783,10 @@ mutacion('post', '/api/meal_preps', async req => {
 
 app.get('/api/meal_preps', async (req, res, next) => {
   try {
-    const mealPreps = await MealPrep.find(await filtroPropietario(MealPrep, req.usuarioId)).lean();
-    res.status(200).json(responseFormat(true, 'Lista de planes obtenida', mealPreps));
+    const filtro = await filtroPropietario(MealPrep, req.usuarioId);
+    const { datos, extras } = await consultarLista(MealPrep, req.query, ['nombre_receta', 'ingrediente_nombre'], filtro);
+    const patrones_en_uso = extras ? await MealPrep.distinct('patron_predictivo_id', filtro) : undefined;
+    res.json({ ...responseFormat(true, 'Lista de planes obtenida', datos), ...extras, patrones_en_uso });
   } catch (error) {
     next(error);
   }

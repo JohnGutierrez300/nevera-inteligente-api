@@ -11,7 +11,6 @@ export const catalogs = {
 const notificationTypes = { VENCIMIENTO: 'Vencimiento', STOCK_BAJO: 'Stock bajo', SUGERENCIA: 'Sugerencia' };
 const movements = { CREADO: 'Agregado', ACTUALIZADO: 'Actualizado', ELIMINADO: 'Eliminado' };
 const percent = new Intl.NumberFormat('es-CO', { style: 'percent', maximumFractionDigits: 1 });
-const normalize = text => String(text ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
 const reference = value => typeof value === 'string' ? value : value?._id ?? '';
 
 function section(title, button) {
@@ -150,13 +149,41 @@ function planDetails(plan, patterns) {
   };
 }
 
-function plans(items, suggestions, { unusedPatterns, onEdit, onDetail, onDelete, onDeletePattern, onViewLot }) {
+function searchForm(label, filters, controls, onSearch) {
+  const search = labelInput(label, 'busqueda', { type: 'search', maxLength: 100, value: filters.busqueda ?? '' });
+  const form = element('form', '', 'feature-filters');
+  form.append(search.wrapper, ...controls.map(control => control.wrapper), element('button', 'Buscar', 'secondary'));
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    onSearch({ busqueda: search.input.value.trim(), ...Object.fromEntries(
+      controls.map(({ select }) => [select.name, select.value])
+    ) });
+  });
+  for (const { select } of controls) select.addEventListener('change', () => form.requestSubmit());
+  return form;
+}
+
+function pageControls({ pagina, hay_siguiente }, label, onPage) {
+  const previous = action('Anterior', () => onPage(-1), 'secondary');
+  const next = action('Siguiente', () => onPage(1), 'secondary');
+  previous.disabled = pagina === 1;
+  next.disabled = !hay_siguiente;
+  const pagination = group('inventory-pagination', previous, element('span', 'Página ' + pagina), next);
+  pagination.hidden = previous.disabled && next.disabled;
+  pagination.setAttribute('aria-label', label);
+  return pagination;
+}
+
+function plans(items, suggestions, { unusedPatterns, onEdit, onDetail, onDelete, onDeletePattern, onViewLot,
+  filters, pagination, onSearch, onPage }) {
   const plansSection = section('Mis planes', action('Nuevo plan', () => onEdit(), 'primary button-add'));
+  plansSection.append(searchForm('Buscar planes', filters, [], onSearch));
   plansSection.append(list(items, plan => row(plan.nombre_receta, plan.ingrediente_nombre, [
     action('Ver plan', () => onDetail(plan._id), 'text-button button-view'),
     action('Editar', () => onEdit(plan), 'text-button button-edit'),
     action('Eliminar', () => onDelete(plan), 'text-button danger')
-  ]), 'Todavía no tienes planes de comida.'));
+  ]), filters.busqueda ? 'No hay planes para esta búsqueda.' : 'Todavía no tienes planes de comida.'));
+  plansSection.append(pageControls(pagination, 'Paginación de planes', onPage));
 
   const suggestionsSection = section('Ideas según tu inventario');
   suggestionsSection.append(list(suggestions, idea => row(
@@ -268,7 +295,7 @@ function catalogEditor(kind, { brands, categories } = {}) {
   return { title: 'Agregar ' + catalogs[kind].singular, fields };
 }
 
-function catalog(kind, items, admin, { onSelect, onAdd, onDelete }) {
+function catalog(kind, items, admin, { onSelect, onAdd, onDelete, choices, filters, pagination, onSearch, onPage }) {
   const meta = catalogs[kind];
   const tabs = group('panel-tabs');
   for (const [key, entry] of Object.entries(catalogs)) {
@@ -277,53 +304,43 @@ function catalog(kind, items, admin, { onSelect, onAdd, onDelete }) {
     tabs.append(tab);
   }
   const body = section(meta.label, admin ? action('Agregar ' + meta.singular, onAdd, 'primary button-add') : null);
-  const search = labelInput('Buscar en ' + meta.label.toLowerCase(), 'busqueda', { type: 'search' });
-  const filters = group('feature-filters', search.wrapper);
-  const results = group('feature-list');
-  const filtersBy = [];
-  if (kind === 'productos') {
-    for (const [label, key] of [['Marca', 'marca_nombre'], ['Categoría', 'categoria_nombre']]) {
-      const options = [...new Set(items.map(item => reference(item[key])).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
-      const control = labelSelect(label, key, [['', 'Todas'], ...options.map(value => [value, value])]);
-      control.select.addEventListener('change', apply);
-      filtersBy.push([key, control.select]);
-      filters.append(control.wrapper);
-    }
-  }
-  function apply() {
-    const visible = items.filter(item =>
-      normalize(item.nombre ?? item._id).includes(normalize(search.input.value)) &&
-      filtersBy.every(([key, select]) => !select.value || reference(item[key]) === select.value)
-    );
-    const content = list(visible, item => {
+  const controls = choices.map((options, index) => {
+    const [label, key] = [['Marca', 'marca_nombre'], ['Categoría', 'categoria_nombre']][index];
+    const ids = options.map(item => item._id).sort((a, b) => a.localeCompare(b, 'es'));
+    return labelSelect(label, key, [['', 'Todas'], ...ids.map(id => [id, id])], filters[key] ?? '');
+  });
+  const results = list(items, item => {
       const name = item.nombre ?? item._id;
       const description = [reference(item.marca_nombre), reference(item.categoria_nombre), item.abreviatura].filter(Boolean).join(' · ');
       const buttons = admin ? [action('Eliminar', () => onDelete(item._id, name), 'text-button danger')] : [];
       return row(name, description, buttons);
-    }, 'No hay resultados en este catálogo.');
-    results.replaceChildren(...content.childNodes);
-  }
-  search.input.addEventListener('input', apply);
-  apply();
-  body.append(filters, results);
+  }, 'No hay resultados en este catálogo.');
+  body.append(searchForm('Buscar en ' + meta.label.toLowerCase(), filters, controls, onSearch),
+    results, pageControls(pagination, 'Paginación del catálogo', onPage));
   return group('panel-content', tabs, body);
 }
 
 function profileEditor(account) {
-  const waiting = Date.parse(account.nombre_editable_desde) > Date.now();
   const name = labelInput('Usuario', 'nombre', {
-    required: true, value: account.nombre, autocomplete: 'username', disabled: waiting
+    required: true, value: account.nombre, autocomplete: 'username'
   });
-  const hint = element('p', waiting
-    ? 'Puedes volver a cambiar tu usuario el ' + formatDate(account.nombre_editable_desde) + ' (hora de Colombia).'
-    : 'Puedes cambiar tu usuario una vez cada 30 días.', 'muted');
+  const hint = element('p', '', 'muted');
+  function updateName(profile) {
+    const waiting = Date.parse(profile.nombre_editable_desde) > Date.now();
+    name.input.disabled = waiting;
+    name.input.value = profile.nombre;
+    hint.textContent = waiting
+      ? 'Puedes volver a cambiar tu usuario el ' + formatDate(profile.nombre_editable_desde) + ' (hora de Colombia).'
+      : 'Puedes cambiar tu usuario una vez cada 30 días.';
+  }
+  updateName(account);
   hint.id = 'profile-name-cooldown';
   name.input.setAttribute('aria-describedby', hint.id);
   const email = labelInput('Correo', 'email', { required: true, value: account.email, type: 'email', autocomplete: 'email' });
   const password = labelInput('Contraseña actual (para cambiar el correo)', 'password_actual', {
     type: 'password', autocomplete: 'current-password'
   });
-  return { title: 'Editar perfil', fields: [name.wrapper, hint, email.wrapper, password.wrapper] };
+  return { title: 'Editar perfil', fields: [name.wrapper, hint, email.wrapper, password.wrapper], updateName };
 }
 
 function passwordEditor() {

@@ -114,6 +114,7 @@ export function createModel(request) {
     },
     plans: {
       list: () => read('/meal_preps'),
+      page: filters => request('/meal_preps?' + new URLSearchParams(filters)),
       get: id => read(byId('/meal_preps', id)),
       suggestions: () => read('/meal_preps/sugerencias'),
       patterns: () => read('/patrones_predictivos'),
@@ -138,6 +139,7 @@ export function createModel(request) {
     },
     catalog: {
       list: kind => kind === 'productos' ? listProducts() : read('/' + kind),
+      page: (kind, filters) => request('/' + kind + '?' + new URLSearchParams(filters)),
       productsForDisplay: () => listProducts(true),
       create: (kind, fields) => changeCatalog(kind, request('/' + kind, 'POST', catalogPayload(kind, fields))),
       remove: (kind, id) => changeCatalog(kind, remove('/' + kind, id))

@@ -1225,6 +1225,8 @@ test('Mi cuenta requiere el nombre exacto y respeta el bloqueo por dependencias 
   await dialogo.getByRole('checkbox').check();
   await eliminar.click();
   await pagina.getByText(/Registros vinculados.*inventario/).waitFor();
+  assert.ok(await dialogo.isVisible());
+  await dialogo.getByRole('button', { name: 'Cancelar', exact: true }).click();
   assert.ok(await pagina.locator('#dashboard').isVisible());
 
   await pagina.getByRole('button', { name: 'Inventario', exact: true }).click();
@@ -1268,6 +1270,17 @@ test('Mi cuenta requiere el nombre exacto y respeta el bloqueo por dependencias 
   assert.match(html, /Content-Type: text\/html/i);
   assert.ok(html.includes('>' + codigo[1] + '</p>'));
   assert.match(html, /<strong>5 minutos<\/strong>/);
+  const cliente = await new MongoClient(mongoUri).connect();
+  try {
+    await cliente.db().collection('usuarios').updateOne({ _id: idLibre }, {
+      $set: { 'eliminacion_codigo.enviar_despues': new Date(0) }
+    });
+  } finally {
+    await cliente.close();
+  }
+  await prepararGmail({ estado: 400 });
+  await dialogo.getByRole('button', { name: 'Enviar código al correo' }).click();
+  await dialogo.getByText('No se pudo enviar el código. Inténtalo de nuevo.').waitFor();
   await dialogo.locator('#delete-code').evaluate((input, valor) => {
     const clipboardData = new DataTransfer();
     clipboardData.setData('text/plain', valor.slice(0, 3) + ' ' + valor.slice(3));
@@ -1305,6 +1318,8 @@ test('El servidor local carga el frontend MVC y permite usar planes, avisos, cat
   await entrar(pagina, idAdminLocal, inicio[1]);
   const irA = vista => pagina.locator('#navigation [data-view="' + vista + '"]').click();
   const editor = pagina.locator('#editor-form');
+  const cerrarAviso = pagina.getByRole('button', { name: 'Cerrar aviso' });
+  await cerrarAviso.click();
   await irA('plans');
   await pagina.getByRole('button', { name: 'Nuevo plan', exact: true }).click();
   await editor.getByLabel('Nombre del plan').fill('Desayuno de prueba');
@@ -1316,6 +1331,13 @@ test('El servidor local carga el frontend MVC y permite usar planes, avisos, cat
   await plan.getByRole('button', { name: 'Ver plan', exact: true }).click();
   await pagina.locator('#detail-dialog').getByText(/Compra cada 7 días/).waitFor();
   await pagina.locator('#detail-dialog').getByRole('button', { name: 'Cerrar' }).click();
+  await pagina.getByLabel('Buscar planes').fill('sin coincidencia');
+  await pagina.getByRole('button', { name: 'Buscar', exact: true }).click();
+  await pagina.getByText('No hay planes para esta búsqueda.').waitFor();
+  assert.equal(await pagina.getByRole('button', { name: 'Eliminar patrón', exact: true }).count(), 0);
+  await pagina.getByLabel('Buscar planes').fill('desayuno');
+  await pagina.getByRole('button', { name: 'Buscar', exact: true }).click();
+  await plan.waitFor();
 
   const borrarPatron = pagina.getByRole('button', { name: 'Eliminar patrón', exact: true });
   assert.equal(await borrarPatron.count(), 0);
@@ -1341,6 +1363,10 @@ test('El servidor local carga el frontend MVC y permite usar planes, avisos, cat
   await editor.locator('select[name=marca_nombre]').selectOption('Marca de prueba');
   await editor.locator('select[name=categoria_nombre]').selectOption('Lácteos');
   await editor.getByRole('button', { name: 'Guardar', exact: true }).click();
+  await pagina.getByRole('heading', { name: 'Queso de prueba', exact: true }).waitFor();
+  await pagina.getByLabel('Buscar en productos').fill('queso');
+  await pagina.getByRole('button', { name: 'Buscar', exact: true }).click();
+  await pagina.getByRole('heading', { name: 'Leche de prueba', exact: true }).waitFor({ state: 'hidden' });
   await pagina.getByRole('heading', { name: 'Queso de prueba', exact: true }).waitFor();
 
   await irA('history');
@@ -1573,6 +1599,13 @@ test('El catálogo conserva el orden y las referencias faltantes al agrupar la c
   const orden = (await productos.find().toArray()).map(item => item._id);
   const catalogo = await correcto('/productos');
   assert.deepEqual(catalogo.map(item => item._id), orden);
+  const primera = await api('/productos?pagina=1&limite=1');
+  const segunda = await api('/productos?pagina=2&limite=1');
+  assert.deepEqual(primera.paginacion, { pagina: 1, limite: 1, hay_siguiente: true });
+  assert.equal(primera.data.length, 1);
+  assert.equal(segunda.data.length, 1);
+  assert.notEqual(primera.data[0]._id, segunda.data[0]._id);
+  assert.deepEqual((await correcto('/categorias?busqueda=lacteos')).map(item => item._id), ['Lácteos']);
   assert.deepEqual(catalogo.find(item => item._id === sinReferencia._id), {
     ...sinReferencia, categoria_nombre: { _id: sinReferencia.categoria_nombre }
   });

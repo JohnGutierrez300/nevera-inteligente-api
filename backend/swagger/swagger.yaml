@@ -489,7 +489,14 @@ paths:
       tags: [Categorías]
       operationId: listCategories
       summary: Listar categorías
+      description: La respuesta incluye paginacion al enviar pagina o limite.
+      parameters:
+        - $ref: '#/components/parameters/BusquedaListaQuery'
+        - $ref: '#/components/parameters/PaginaQuery'
+        - $ref: '#/components/parameters/LimiteQuery'
       responses:
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "200":
           $ref: '#/components/responses/Ok'
         "500":
@@ -556,7 +563,14 @@ paths:
       tags: [Marcas]
       operationId: listBrands
       summary: Listar marcas
+      description: La respuesta incluye paginacion al enviar pagina o limite.
+      parameters:
+        - $ref: '#/components/parameters/BusquedaListaQuery'
+        - $ref: '#/components/parameters/PaginaQuery'
+        - $ref: '#/components/parameters/LimiteQuery'
       responses:
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "200":
           $ref: '#/components/responses/Ok'
         "500":
@@ -623,7 +637,14 @@ paths:
       tags: [Unidades de Medida]
       operationId: listUnits
       summary: Listar unidades de medida
+      description: La respuesta incluye paginacion al enviar pagina o limite.
+      parameters:
+        - $ref: '#/components/parameters/BusquedaListaQuery'
+        - $ref: '#/components/parameters/PaginaQuery'
+        - $ref: '#/components/parameters/LimiteQuery'
       responses:
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "200":
           $ref: '#/components/responses/Ok'
         "500":
@@ -690,7 +711,14 @@ paths:
       tags: [Ingredientes]
       operationId: listIngredients
       summary: Listar ingredientes
+      description: La respuesta incluye paginacion al enviar pagina o limite.
+      parameters:
+        - $ref: '#/components/parameters/BusquedaListaQuery'
+        - $ref: '#/components/parameters/PaginaQuery'
+        - $ref: '#/components/parameters/LimiteQuery'
       responses:
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "200":
           $ref: '#/components/responses/Ok'
         "500":
@@ -757,7 +785,16 @@ paths:
       tags: [Productos]
       operationId: listProducts
       summary: Listar productos con detalle de marca y categoría
+      description: La respuesta incluye paginacion al enviar pagina o limite.
+      parameters:
+        - $ref: '#/components/parameters/BusquedaListaQuery'
+        - $ref: '#/components/parameters/PaginaQuery'
+        - $ref: '#/components/parameters/LimiteQuery'
+        - $ref: '#/components/parameters/FiltroMarcaQuery'
+        - $ref: '#/components/parameters/FiltroCategoriaQuery'
       responses:
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "200":
           $ref: '#/components/responses/Ok'
         "500":
@@ -1236,7 +1273,14 @@ paths:
       tags: [Planes de Comida (Meal Preps)]
       operationId: listMealPreps
       summary: Listar planes de comida
+      description: La respuesta incluye paginacion al enviar pagina o limite. Las respuestas paginadas incluyen patrones_en_uso de todos los planes de la cuenta.
+      parameters:
+        - $ref: '#/components/parameters/BusquedaListaQuery'
+        - $ref: '#/components/parameters/PaginaQuery'
+        - $ref: '#/components/parameters/LimiteQuery'
       responses:
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "200":
           $ref: '#/components/responses/Ok'
         "500":
@@ -1494,6 +1538,18 @@ components:
   # Parámetros de ID reutilizables
   # ------------------------------------------
   parameters:
+    BusquedaListaQuery:
+      name: busqueda
+      in: query
+      schema: { type: string, maxLength: 100 }
+    FiltroMarcaQuery:
+      name: marca_nombre
+      in: query
+      schema: { type: string }
+    FiltroCategoriaQuery:
+      name: categoria_nombre
+      in: query
+      schema: { type: string }
     PaginaQuery:
       name: pagina
       in: query

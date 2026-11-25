@@ -10,6 +10,8 @@ export function createDashboardController({
 }) {
   const view = createDashboardView();
   let catalog = 'productos';
+  const catalogPage = { pagina: 1, limite: 20 };
+  const plansPage = { pagina: 1, limite: 20 };
   let notificationRequest = 0;
   let homeSummary;
   let lastSummary;
@@ -75,14 +77,13 @@ export function createDashboardController({
     return summary.node;
   }
 
-  async function editPlan(plan, suggestion, patterns, existingPlans) {
+  async function editPlan(plan, suggestion, patterns, used) {
     const generation = getGeneration();
     try {
       const ingredients = await model.catalog.list('ingredientes');
       if (generation !== getGeneration()) return;
       if (!ingredients.length) throw new Error('El catálogo necesita al menos un ingrediente para crear planes.');
-      const used = new Set(existingPlans.filter(item => item._id !== plan?._id).map(item => item.patron_predictivo_id));
-      const available = patterns.filter(pattern => !used.has(pattern._id));
+      const available = patterns.filter(pattern => !used.has(pattern._id) || pattern._id === plan?.patron_predictivo_id);
       edit(view.planEditor({ plan, suggestion, ingredients, patterns: available }), async fields => {
         const createPattern = !available.length || Boolean(fields.crear_patron);
         const response = await model.plans.save(plan?._id, fields, createPattern);
@@ -103,14 +104,40 @@ export function createDashboardController({
     }
   }
 
+  async function paged(load, query) {
+    const filters = { ...query };
+    const generation = getGeneration();
+    let result = await load(filters);
+    if (!result.data.length && filters.pagina > 1) {
+      filters.pagina--;
+      result = await load(filters);
+      if (generation === getGeneration()) query.pagina = filters.pagina;
+    }
+    return result;
+  }
+
+  function pageActions(query) {
+    return {
+      onSearch(filters) {
+        Object.assign(query, filters, { pagina: 1 });
+        void reload();
+      },
+      onPage(change) {
+        query.pagina += change;
+        void reload();
+      }
+    };
+  }
+
   async function plans() {
-    const [items, patterns, suggestions] = await Promise.all([
-      model.plans.list(), model.plans.patterns(), model.plans.suggestions()
+    const [result, patterns, suggestions] = await Promise.all([
+      paged(model.plans.page, plansPage), model.plans.patterns(), model.plans.suggestions()
     ]);
-    const used = new Set(items.map(plan => plan.patron_predictivo_id));
-    return view.plans(items, suggestions, {
+    const used = new Set(result.patrones_en_uso);
+    return view.plans(result.data, suggestions, {
+      ...pageActions(plansPage), pagination: result.paginacion, filters: { ...plansPage },
       unusedPatterns: patterns.filter(pattern => !used.has(pattern._id)),
-      onEdit: (plan, suggestion) => editPlan(plan, suggestion, patterns, items),
+      onEdit: (plan, suggestion) => editPlan(plan, suggestion, patterns, used),
       onDetail: id => planDetail(id, patterns),
       onDelete: plan => remove('¿Eliminar este plan?', 'Se eliminará el plan ' + plan.nombre_receta + '.',
         'Eliminar plan', () => model.plans.remove(plan._id)),
@@ -203,10 +230,17 @@ export function createDashboardController({
 
   async function directory() {
     const kind = catalog;
-    const items = await model.catalog.list(kind);
-    return view.catalog(kind, items, getProfile()?.catalogo_admin, {
+    const [result, choices] = await Promise.all([
+      paged(filters => model.catalog.page(kind, filters), catalogPage),
+      kind === 'productos' ? Promise.all([model.catalog.list('marcas'), model.catalog.list('categorias')]) : []
+    ]);
+    return view.catalog(kind, result.data, getProfile()?.catalogo_admin, {
+      ...pageActions(catalogPage), pagination: result.paginacion, filters: { ...catalogPage }, choices,
       onSelect(tab) {
         catalog = tab;
+        Object.assign(catalogPage, { pagina: 1, busqueda: '' });
+        delete catalogPage.marca_nombre;
+        delete catalogPage.categoria_nombre;
         void reload();
       },
       onAdd: () => addCatalogRecord(kind),
@@ -218,12 +252,23 @@ export function createDashboardController({
   function profile() {
     const account = getProfile();
     return view.profile(account, {
-      onEdit: () => edit(view.profileEditor(account), async body => {
-        if (body.email.trim() !== account.email && !body.password_actual) throw new Error('Confirma tu contraseña actual para cambiar el correo.');
-        const response = await model.account.update(account._id, body);
-        if (getProfile() === account) onProfileSaved(response.data, false);
-        return response.message;
-      }),
+      onEdit: () => {
+        const editor = view.profileEditor(account);
+        edit(editor, async body => {
+          if (body.email.trim() !== account.email && !body.password_actual) throw new Error('Confirma tu contraseña actual para cambiar el correo.');
+          try {
+            const response = await model.account.update(account._id, body);
+            if (getProfile()?._id === account._id) onProfileSaved(response.data, false);
+            return response.message;
+          } catch (error) {
+            if (error.status === 409 && error.data?.nombre_editable_desde && getProfile()?._id === account._id) {
+              editor.updateName(error.data);
+              onProfileSaved(error.data, false);
+            }
+            throw error;
+          }
+        });
+      },
       onChangePassword: () => edit(view.passwordEditor(), async ({ confirmacion, ...body }) => {
         if (body.password !== confirmacion) throw new Error('Las contraseñas nuevas deben coincidir.');
         const response = await model.account.update(account._id, body);
@@ -232,12 +277,8 @@ export function createDashboardController({
       onDelete: () => dialogs.confirm('¿Eliminar tu cuenta?',
         'La API comprobará si tienes registros vinculados. Cuando se elimine la cuenta, se cerrarán sus sesiones y se conservará el historial. Esta acción no se puede deshacer.',
         'Eliminar cuenta', async verification => {
-          try {
-            const response = await model.account.remove(account._id, verification);
-            if (getProfile() === account) onAccountDeleted(response.message);
-          } catch (error) {
-            if (getProfile() === account) notice(error);
-          }
+          const response = await model.account.remove(account._id, verification);
+          if (getProfile() === account) onAccountDeleted(response.message);
         }, { accountName: account.nombre, onRequestCode: () => model.account.requestDeletionCode(account._id) })
     });
   }
@@ -255,6 +296,8 @@ export function createDashboardController({
       notificationRequest++;
       lastSummary = homeSummary = alertsRevision = undefined;
       alertsPage = 1;
+      Object.assign(plansPage, { pagina: 1, busqueda: '' });
+      Object.assign(catalogPage, { pagina: 1, busqueda: '', marca_nombre: '', categoria_nombre: '' });
       view.resetAlertFilters();
     }
   };
