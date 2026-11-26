@@ -1,4 +1,5 @@
 import { action, detailList, element, formatDate, group, lotStates, passwordField } from './componentes.js';
+import { createPasswordChecklist } from './requisitos-clave.js';
 
 export const catalogs = {
   productos: { label: 'Productos', singular: 'producto' },
@@ -345,10 +346,17 @@ function profileEditor(account) {
 
 function passwordEditor() {
   const current = labelInput('Contraseña actual', 'password_actual', { type: 'password', required: true, autocomplete: 'current-password' });
-  const next = labelInput('Contraseña nueva', 'password', { type: 'password', minLength: 12, maxLength: 1024, required: true, autocomplete: 'new-password' });
+  const next = labelInput('Contraseña nueva', 'password', { type: 'password', required: true, autocomplete: 'new-password' });
   const confirm = labelInput('Confirma la contraseña nueva', 'confirmacion', { type: 'password', required: true, autocomplete: 'new-password' });
-  const hint = element('p', 'Usa al menos 12 caracteres, con mayúsculas, minúsculas, números y símbolos.', 'muted');
-  return { title: 'Cambiar contraseña', fields: [hint, current.wrapper, next.wrapper, confirm.wrapper] };
+  const rules = element('div', '', 'password-requirements');
+  rules.id = 'change-password-rules';
+  const checklist = createPasswordChecklist(rules, next.input, confirm.input);
+  checklist.show(true);
+  return {
+    title: 'Cambiar contraseña',
+    fields: [current.wrapper, next.wrapper, rules, confirm.wrapper],
+    validate: checklist.update
+  };
 }
 
 function profile(account, { onEdit, onChangePassword, onDelete }) {

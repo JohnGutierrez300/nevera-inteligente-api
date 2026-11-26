@@ -107,31 +107,36 @@
       </form>
     </section>
     <template id="password-requirements-template">
-      <p data-requirements-title>Requisitos de la contraseña</p>
+      <p data-requirements-title>Requisitos de seguridad</p>
       <ul role="list">
         <li data-password-rule="length">
           <span class="password-requirement-icon" aria-hidden="true">×</span>
-          <span data-length-label>Al menos 12 caracteres</span>
+          <span data-length-label>Entre 8 y 128 caracteres</span>
           <span class="visually-hidden" data-rule-status>Pendiente</span>
         </li>
         <li data-password-rule="uppercase">
           <span class="password-requirement-icon" aria-hidden="true">×</span>
-          Una letra mayúscula
+          Una letra mayúscula (A-Z)
           <span class="visually-hidden" data-rule-status>Pendiente</span>
         </li>
         <li data-password-rule="lowercase">
           <span class="password-requirement-icon" aria-hidden="true">×</span>
-          Una letra minúscula
+          Una letra minúscula (a-z)
           <span class="visually-hidden" data-rule-status>Pendiente</span>
         </li>
         <li data-password-rule="number">
           <span class="password-requirement-icon" aria-hidden="true">×</span>
-          Un número
+          Al menos un número (0-9)
           <span class="visually-hidden" data-rule-status>Pendiente</span>
         </li>
         <li data-password-rule="symbol">
           <span class="password-requirement-icon" aria-hidden="true">×</span>
-          Un símbolo
+          Un carácter especial (!@#$%^&amp;-*)
+          <span class="visually-hidden" data-rule-status>Pendiente</span>
+        </li>
+        <li data-password-rule="allowed">
+          <span class="password-requirement-icon" aria-hidden="true">×</span>
+          Solo caracteres permitidos (sin espacios ni símbolos no autorizados)
           <span class="visually-hidden" data-rule-status>Pendiente</span>
         </li>
         <li data-password-rule="confirmation">
@@ -140,6 +145,10 @@
           <span class="visually-hidden" data-rule-status>Pendiente</span>
         </li>
       </ul>
+      <div class="password-strength">
+        <span data-strength-label>Seguridad: Sin evaluar</span>
+        <progress data-password-strength max="8" value="0"></progress>
+      </div>
       <p class="visually-hidden" role="status"></p>
     </template>
     <section id="dashboard" hidden>

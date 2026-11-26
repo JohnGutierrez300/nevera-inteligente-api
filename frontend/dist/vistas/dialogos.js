@@ -134,12 +134,13 @@ export function createDialogs() {
   });
   bindPasswords(form);
   cancel.addEventListener('click', () => editor.close());
-  editor.addEventListener('cancel', event => { if (submit.disabled) event.preventDefault(); });
+  editor.addEventListener('cancel', event => { if (cancel.disabled) event.preventDefault(); });
   editor.addEventListener('close', () => {
     if (editor.open) return;
     maskPasswords(form);
     for (const input of form.querySelectorAll('.password-field input')) input.value = '';
     form.onsubmit = null;
+    form.oninput = form.onchange = null;
   });
 
   return {
@@ -187,13 +188,21 @@ export function createDialogs() {
     },
     showDetailError(error, onConflict) { showLotError(byId('detail-error'), error, onConflict); },
     get editorOpen() { return editor.open; },
-    openEditor({ title, fields }, onSubmit) {
+    openEditor({ title, fields, validate }, onSubmit) {
       if (editor.open) return;
       byId('editor-title').textContent = title;
       byId('editor-fields').replaceChildren(...fields);
       showEditorError();
+      function updateSubmit() {
+        const valid = validate?.() ?? true;
+        submit.disabled = cancel.disabled || !valid;
+        return valid;
+      }
+      form.oninput = form.onchange = validate ? updateSubmit : null;
+      updateSubmit();
       form.onsubmit = async event => {
         event.preventDefault();
+        if (cancel.disabled || !updateSubmit()) return;
         submit.disabled = cancel.disabled = true;
         showEditorError();
         try {
@@ -201,7 +210,8 @@ export function createDialogs() {
         } catch (error) {
           if (editor.open) showEditorError(errorMessage(error));
         } finally {
-          submit.disabled = cancel.disabled = false;
+          cancel.disabled = false;
+          updateSubmit();
         }
       };
       editor.showModal();

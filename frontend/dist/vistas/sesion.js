@@ -1,4 +1,4 @@
-import { passwordLengthLimit, passwordRequirements } from '../modelos/credenciales.js';
+import { createPasswordChecklist } from './requisitos-clave.js';
 import { bindCodeInput, bindPasswords, byId, field, formValues, maskPasswords, notice } from './componentes.js';
 
 function bindSubmit(form, buttons, send, { validate, blocked, done } = {}) {
@@ -33,67 +33,6 @@ function bindSubmit(form, buttons, send, { validate, blocked, done } = {}) {
   return update;
 }
 
-
-function createPasswordChecklist(container, password, confirmation) {
-  container.append(byId('password-requirements-template').content.cloneNode(true));
-  const title = container.querySelector('[data-requirements-title]');
-  const status = container.querySelector('[role="status"]');
-  const lengthLabel = container.querySelector('[data-length-label]');
-  const minimumLabel = lengthLabel.textContent;
-  title.id = container.id + '-title';
-  status.id = container.id + '-status';
-  container.querySelector('ul').setAttribute('aria-labelledby', title.id);
-  const confirmationRule = container.querySelector('[data-password-rule="confirmation"]');
-  if (confirmation) {
-    confirmationRule.id = container.id + '-confirmation';
-    confirmation.setAttribute('aria-describedby', confirmationRule.id);
-  } else {
-    confirmationRule.remove();
-  }
-  const rules = [...container.querySelectorAll('[data-password-rule]')].map(node => ({
-    node,
-    key: node.dataset.passwordRule,
-    icon: node.querySelector('.password-requirement-icon'),
-    status: node.querySelector('[data-rule-status]')
-  }));
-
-  return {
-    show(active) {
-      container.hidden = !active;
-      if (active) {
-        password.setAttribute('aria-describedby', title.id + ' ' + status.id);
-      } else {
-        password.removeAttribute('aria-describedby');
-        password.removeAttribute('aria-invalid');
-      }
-    },
-    update() {
-      const value = password.value;
-      const checks = passwordRequirements(value);
-      const validPassword = Object.values(checks).every(Boolean);
-      if (confirmation) {
-        const repeated = confirmation.value;
-        checks.confirmation = Boolean(value) && value === repeated;
-        confirmation.setAttribute('aria-invalid', String(Boolean(repeated) && !checks.confirmation));
-      }
-      const label = value.length > passwordLengthLimit ? 'La contraseña es demasiado larga' : minimumLabel;
-      if (lengthLabel.textContent !== label) lengthLabel.textContent = label;
-      let met = 0;
-      for (const rule of rules) {
-        const valid = checks[rule.key];
-        if (valid) met++;
-        rule.node.classList.toggle('is-met', valid);
-        rule.icon.textContent = valid ? '✓' : '×';
-        rule.status.textContent = valid ? 'Cumplido' : 'Pendiente';
-      }
-      const complete = met === rules.length;
-      const summary = `${met} de ${rules.length} requisitos cumplidos.`;
-      if (status.textContent !== summary) status.textContent = summary;
-      password.setAttribute('aria-invalid', String(Boolean(value) && !validPassword));
-      return complete;
-    }
-  };
-}
 
 export function createSessionView({ onAuth, onRecover, onReset, onBack, onRetry }) {
   const login = byId('login');

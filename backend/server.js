@@ -340,7 +340,8 @@ const VENTANA_INGRESO_MS = 5 * 60 * 1000;
 const BLOQUEO_INGRESO_MS = 5 * 60 * 1000;
 const RESERVA_ULTIMO_INTENTO_MS = 30 * 1000;
 const MENSAJE_SESION_ACTIVA = 'Esta cuenta ya tiene una sesión activa. Cierra esa sesión para iniciar otra.';
-const CLAVE_SEGURA = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{12,1024}$/;
+const CLAVE_SEGURA = /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$%^&*-])[A-Za-z0-9!@#$%^&*-]{8,128}$/;
+const REQUISITOS_CLAVE = 'Usa entre 8 y 128 caracteres, con una minúscula, una mayúscula, un número y un símbolo de !@#$%^&-*. Usa solo esos caracteres y evita los espacios.';
 const NOMBRE_COOKIE = 'nevera_session';
 const ADMINISTRADORES_CATALOGO = new Set(
   (process.env.CATALOG_ADMIN_IDS ?? '').split(',').map(id => id.trim()).filter(Boolean)
@@ -803,7 +804,7 @@ app.post('/api/usuarios/restablecer-contrasena', async (req, res) => {
     throw new ApiError(400, 'Ingresa el correo de tu cuenta y el código de 6 dígitos.');
   }
   if (typeof password !== 'string' || !CLAVE_SEGURA.test(password)) {
-    throw new ApiError(400, 'Usa entre 12 y 1024 caracteres, con mayúsculas, minúsculas, números y símbolos.');
+    throw new ApiError(400, REQUISITOS_CLAVE);
   }
 
   const vigente = { recuperacion_vence: { $gt: new Date() } };
@@ -940,7 +941,7 @@ app.post('/api/usuarios', async (req, res, next) => {
     }
 
     if (typeof clave !== 'string' || !CLAVE_SEGURA.test(clave)) {
-      return res.status(200).json(responseFormat(false, 'La contraseña no cumple con los requisitos de seguridad (mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos).', null));
+      return res.status(200).json(responseFormat(false, REQUISITOS_CLAVE, null));
     }
 
     const passwordProtegida = await protegerClave(clave);
@@ -1044,7 +1045,7 @@ app.put('/api/usuarios/:id', async (req, res, next) => {
 
     if (clave !== undefined) {
       if (typeof clave !== 'string' || !CLAVE_SEGURA.test(clave)) {
-        return res.status(200).json(responseFormat(false, 'La nueva contraseña no cumple con los requisitos de seguridad.', null));
+        return res.status(200).json(responseFormat(false, REQUISITOS_CLAVE, null));
       }
     }
 

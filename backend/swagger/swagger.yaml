@@ -198,8 +198,10 @@ paths:
                 password:
                   type: string
                   format: password
-                  minLength: 12
-                  maxLength: 1024
+                  minLength: 8
+                  maxLength: 128
+                  pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$%^&*-])[A-Za-z0-9!@#$%^&*-]{8,128}$'
+                  description: Usa solo letras de la A a la Z, números y los símbolos !@#$%^&-*. Incluye una mayúscula, una minúscula, un número y un símbolo.
       responses:
         "200":
           $ref: '#/components/responses/Ok'
@@ -1818,7 +1820,10 @@ components:
         password:
           type: string
           format: password
-          description: Mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos
+          minLength: 8
+          maxLength: 128
+          pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$%^&*-])[A-Za-z0-9!@#$%^&*-]{8,128}$'
+          description: Usa solo letras de la A a la Z, números y los símbolos !@#$%^&-*. Incluye una mayúscula, una minúscula, un número y un símbolo.
           example: Ejemplo2026!Jj
 
     UsuarioUpdate:
@@ -1834,7 +1839,10 @@ components:
         password:
           type: string
           format: password
-          description: Mínimo 12 caracteres, mayúsculas, minúsculas, números y símbolos
+          minLength: 8
+          maxLength: 128
+          pattern: '^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$%^&*-])[A-Za-z0-9!@#$%^&*-]{8,128}$'
+          description: Usa solo letras de la A a la Z, números y los símbolos !@#$%^&-*. Incluye una mayúscula, una minúscula, un número y un símbolo.
           example: Ejemplo2026!Jj
         password_actual:
           type: string
